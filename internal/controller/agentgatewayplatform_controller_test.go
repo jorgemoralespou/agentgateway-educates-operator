@@ -136,14 +136,30 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 		})
 
 		It("creates the gateway namespace, owned by the platform so it cascades", func() {
-			createPlatform()
+			// A namespace of its own, because envtest never actually removes a
+			// namespace — there is no namespace controller to finish the job —
+			// so one another spec created would already exist here, unowned,
+			// and the operator would rightly leave it alone.
+			namespace := "agentgateway-ownership-test"
+
+			platform := &agentgatewayv1alpha1.AgentGatewayPlatform{
+				ObjectMeta: metav1.ObjectMeta{Name: agentgatewayv1alpha1.SingletonName},
+				Spec: agentgatewayv1alpha1.AgentGatewayPlatformSpec{
+					Provider:   agentgatewayv1alpha1.ProviderBundled,
+					GatewayAPI: agentgatewayv1alpha1.GatewayAPIManaged,
+					BundledAgentgateway: &agentgatewayv1alpha1.BundledAgentgatewaySpec{
+						Namespace: namespace,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, platform)).To(Succeed())
 
 			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{Name: testGatewayNamespace}, &corev1.Namespace{})
+				return k8sClient.Get(ctx, types.NamespacedName{Name: namespace}, &corev1.Namespace{})
 			}, pollTimeout, pollInterval).Should(Succeed())
 
 			ns := &corev1.Namespace{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testGatewayNamespace}, ns)).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: namespace}, ns)).To(Succeed())
 			Expect(ns.Labels).To(HaveKeyWithValue(ManagedByLabel, ManagedByValue))
 			Expect(ns.OwnerReferences).To(HaveLen(1))
 			Expect(ns.OwnerReferences[0].Kind).To(Equal("AgentGatewayPlatform"))

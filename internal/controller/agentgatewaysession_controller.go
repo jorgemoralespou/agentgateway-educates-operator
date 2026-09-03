@@ -15,8 +15,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	agentgatewayv1alpha1 "github.com/educates/agentgateway-educates-operator/api/agentgateway/v1alpha1"
 	"github.com/educates/agentgateway-educates-operator/internal/participantkey"
@@ -63,16 +65,27 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 		return r.reconcileDelete(ctx, session)
 	}
 
-	session.Status.ObservedGeneration = session.Generation
-
 	// Placement is checked before anything is created. A grant in a session
 	// namespace produces a Secret the attendee's pod cannot resolve, and the pod
 	// then wedges in CreateContainerConfigError with no useful diagnostic — so
 	// it is rejected with an explanatory condition rather than reconciled
 	// (ADR-0002).
 	if ok, reason := r.placementValid(ctx, session); !ok {
+		session.Status.ObservedGeneration = session.Generation
 		return r.reject(ctx, session, reason)
 	}
+
+	// The finalizer is added before any condition is built, because a spec
+	// Update returns the server's copy of the object and would discard
+	// conditions accumulated in memory beforehand.
+	if !controllerutil.ContainsFinalizer(session, agentgatewayv1alpha1.SessionFinalizer) {
+		controllerutil.AddFinalizer(session, agentgatewayv1alpha1.SessionFinalizer)
+		if err := r.Update(ctx, session); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	session.Status.ObservedGeneration = session.Generation
 	setCondition(&session.Status.Conditions, session.Generation,
 		agentgatewayv1alpha1.ConditionPlacementValid, metav1.ConditionTrue,
 		agentgatewayv1alpha1.ReasonReady,
@@ -99,13 +112,6 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 		agentgatewayv1alpha1.ConditionCatalogAvailable, metav1.ConditionTrue,
 		agentgatewayv1alpha1.ReasonReady,
 		fmt.Sprintf("catalog %q is ready", session.CatalogName()))
-
-	if !controllerutil.ContainsFinalizer(session, agentgatewayv1alpha1.SessionFinalizer) {
-		controllerutil.AddFinalizer(session, agentgatewayv1alpha1.SessionFinalizer)
-		if err := r.Update(ctx, session); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
 
 	// The key is read from the Secret when it exists, and generated only when
 	// it does not. Generating on every pass would rotate a live attendee out of
@@ -472,9 +478,33 @@ func (r *AgentGatewaySessionReconciler) SetupWithManager(mgr ctrl.Manager) error
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&agentgatewayv1alpha1.AgentGatewaySession{},
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
-		// The Secret is watched so a deleted one is repaired: losing it is the
-		// self-healing path, not a permanent failure.
-		Owns(&corev1.Secret{}).
+		// Secrets are watched by label rather than with Owns(), because the
+		// Secret is deliberately owned by the session *namespace* and not by
+		// this resource — Owns() would match nothing, and a deleted Secret
+		// would never be repaired.
+		Watches(&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(mapSecretToSession)).
 		Named("agentgatewaysession").
 		Complete(r)
+}
+
+// mapSecretToSession routes a participant key Secret back to its grant.
+//
+// The labels this operator writes carry both halves of the grant's identity,
+// which is what makes the mapping possible without an owner reference.
+func mapSecretToSession(_ context.Context, obj client.Object) []reconcile.Request {
+	labels := obj.GetLabels()
+	if labels[ManagedByLabel] != ManagedByValue {
+		return nil
+	}
+
+	name := labels[agentgatewayv1alpha1.SessionLabel]
+	namespace := labels[agentgatewayv1alpha1.SessionNSLabel]
+	if name == "" || namespace == "" {
+		return nil
+	}
+
+	return []reconcile.Request{{
+		NamespacedName: types.NamespacedName{Namespace: namespace, Name: name},
+	}}
 }
