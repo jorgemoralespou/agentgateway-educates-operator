@@ -23,7 +23,7 @@ GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
 
 ## Tool versions
 CONTROLLER_TOOLS_VERSION ?= v0.20.1
-GOLANGCI_LINT_VERSION ?= v2.11.4
+GOLANGCI_LINT_VERSION ?= v2.13.2
 
 # gomodver resolves a dependency's version from go.mod, honouring any replace
 # directive. Deriving the envtest versions from go.mod rather than hardcoding

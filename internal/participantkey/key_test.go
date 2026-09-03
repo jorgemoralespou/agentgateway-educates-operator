@@ -83,13 +83,25 @@ func TestHashMatchesAgentgatewayExpectations(t *testing.T) {
 
 // Hashing must be stable: the same key always produces the same registration,
 // so a reconcile does not rewrite an unchanged ConfigMap.
+//
+// The key is round-tripped through a copy rather than hashed twice in one
+// expression, so this tests the function rather than a constant the compiler
+// could fold away.
 func TestHashIsStable(t *testing.T) {
 	key, err := Generate()
 	if err != nil {
 		t.Fatalf("Generate() error: %v", err)
 	}
-	if Hash(key) != Hash(key) {
-		t.Error("Hash() is not stable for the same input")
+
+	first := Hash(key)
+
+	// A distinct string with the same contents, as a reconcile would read back
+	// out of a Secret.
+	roundTripped := string([]byte(key))
+	second := Hash(roundTripped)
+
+	if first != second {
+		t.Errorf("Hash() is not stable: %q then %q", first, second)
 	}
 }
 

@@ -165,7 +165,9 @@ func (r *AgentGatewaySessionReconciler) releaseSessionFinalizer(ctx context.Cont
 	if err := r.Update(ctx, live); err != nil {
 		if apierrors.IsNotFound(err) || apierrors.IsConflict(err) {
 			// Gone, or changed under us; either way the next pass settles it.
-			return ctrl.Result{Requeue: true}, nil
+			// Requeued promptly rather than immediately, because an immediate
+			// requeue on a conflict would spin against whoever is writing.
+			return ctrl.Result{RequeueAfter: time.Second}, nil
 		}
 		return ctrl.Result{}, err
 	}
