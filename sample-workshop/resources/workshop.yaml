@@ -1,0 +1,93 @@
+apiVersion: training.educates.dev/v1beta1
+kind: Workshop
+metadata:
+  name: lab-agentgateway-sample
+spec:
+  title: Per-attendee LLM keys with agentgateway
+  description: >-
+    Each attendee gets their own rate-limited LLM API key, minted for the
+    session and revoked when it ends. Shows what a workshop author writes and
+    what the operator does with it.
+
+  publish:
+    image: $(image_repository)/lab-agentgateway-sample-files:$(workshop_version)
+
+  workshop:
+    files:
+      - image:
+          url: $(image_repository)/lab-agentgateway-sample-files:$(workshop_version)
+
+  session:
+    namespaces:
+      budget: small
+
+    # The attendee's whole integration surface. Standard OpenAI-compatible
+    # client libraries pick both of these up with no configuration, so workshop
+    # content can use any SDK without knowing the gateway exists.
+    env:
+      - name: OPENAI_BASE_URL
+        valueFrom:
+          secretKeyRef:
+            name: $(session_name)-agentgateway
+            key: base-url
+      - name: OPENAI_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: $(session_name)-agentgateway
+            key: api-key
+
+    objects:
+      # Attendees inspect their own grant and Secret on pages 2 and 4. The
+      # default session role covers only the core, apps, batch and networking
+      # groups, so reading a custom resource needs an explicit grant — without
+      # this, every kubectl command in the content fails with a forbidden error.
+      #
+      # Both objects go in the workshop namespace because that is where the
+      # session's service account lives and where the operator places the
+      # Secret. The subject namespace below is $(workshop_namespace) for the
+      # same reason; $(session_namespace) is the common mistake here.
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          name: $(session_name)-agentgateway-reader
+          namespace: $(workshop_namespace)
+        rules:
+          - apiGroups: ["agentgateway.operators.educates.dev"]
+            resources: ["agentgatewaysessions"]
+            verbs: ["get", "list", "watch"]
+          - apiGroups: [""]
+            resources: ["secrets"]
+            resourceNames: ["$(session_name)-agentgateway"]
+            verbs: ["get"]
+
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: $(session_name)-agentgateway-reader
+          namespace: $(workshop_namespace)
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: $(session_name)-agentgateway-reader
+        subjects:
+          - kind: ServiceAccount
+            name: $(service_account)
+            namespace: $(workshop_namespace)
+
+      - apiVersion: agentgateway.operators.educates.dev/v1alpha1
+        kind: AgentGatewaySession
+        metadata:
+          name: $(session_name)
+          # REQUIRED, and load-bearing. Without it the grant lands in the
+          # session namespace, where the Secret it creates would be unreachable
+          # by the attendee's pod: that pod runs in the workshop namespace and a
+          # secretKeyRef can only resolve within its own namespace. The operator
+          # rejects a grant placed here with PlacementValid=False rather than
+          # failing silently.
+          namespace: $(workshop_namespace)
+        spec:
+          catalogRef:
+            name: cluster
+          # Deliberately small so page 3 can exhaust it inside a session.
+          tokenBudget: 20000
+          ttl: 2h

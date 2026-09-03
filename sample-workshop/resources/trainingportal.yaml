@@ -1,0 +1,16 @@
+apiVersion: training.educates.dev/v1beta1
+kind: TrainingPortal
+metadata:
+  name: lab-agentgateway-sample
+spec:
+  portal:
+    sessions:
+      maximum: 2
+  workshops:
+    - name: lab-agentgateway-sample
+      # Two concurrent sessions, because page 3 needs a second attendee to show
+      # that one person exhausting their budget does not affect anyone else.
+      capacity: 2
+      reserved: 0
+      expires: 2h
+      orphaned: 15m

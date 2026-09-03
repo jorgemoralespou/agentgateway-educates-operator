@@ -1,0 +1,72 @@
+# The model catalog the sample workshop reads from.
+#
+# Deliberately not under resources/: that directory is for Educates workshop
+# resources, and the CI publisher copies workshop.yaml and trainingportal.yaml
+# from it. The catalog is cluster setup a workshop depends on, not part of the
+# workshop itself.
+#
+# Apply it with `make deploy-sample-catalog`, which first checks the credential
+# Secret below exists. Nothing in this repository creates that Secret: a
+# provider API key is yours to supply.
+#
+#   kubectl create secret generic agentgateway-provider-credentials \
+#     --namespace agentgateway-system \
+#     --from-literal=api-key=sk-ant-...
+#
+# The `name` of each model is what attendees address — `fast`, `smart`. The
+# provider's own model name is never exposed to them, so switching provider
+# below leaves the workshop content untouched.
+apiVersion: agentgateway.operators.educates.dev/v1alpha1
+kind: AgentGatewayCatalog
+metadata:
+  name: cluster
+spec:
+  models:
+    - name: fast
+      provider: Anthropic
+      model: claude-haiku-4-5-20251001
+      credentialRef:
+        name: agentgateway-provider-credentials
+        key: api-key
+
+    - name: smart
+      provider: Anthropic
+      model: claude-sonnet-4-5-20250929
+      credentialRef:
+        name: agentgateway-provider-credentials
+        key: api-key
+
+  # FailClosed is the default: if the rate limit service cannot be reached, a
+  # request is refused rather than let through unmetered. For a workshop
+  # handing out budgeted keys that is the safer failure.
+  rateLimit:
+    failureMode: FailClosed
+
+# ---
+# OpenAI instead. Create the Secret with an sk-... key from platform.openai.com.
+#
+#   - name: fast
+#     provider: OpenAI
+#     model: gpt-4o-mini
+#     credentialRef:
+#       name: agentgateway-provider-credentials
+#       key: api-key
+#   - name: smart
+#     provider: OpenAI
+#     model: gpt-4o
+#     credentialRef:
+#       name: agentgateway-provider-credentials
+#       key: api-key
+#
+# ---
+# Ollama, for a demo with no paid credential at all. Needs an Ollama reachable
+# from the cluster, and baseURL is required for this provider. The credential
+# Secret must still exist; its contents are ignored.
+#
+#   - name: fast
+#     provider: Ollama
+#     model: llama3.2
+#     baseURL: http://ollama.ollama.svc.cluster.local:11434
+#     credentialRef:
+#       name: agentgateway-provider-credentials
+#       key: api-key
