@@ -1,0 +1,150 @@
+# The operator release.
+#
+# Tag-driven: pushing v1.2.3 publishes a multiarch image, the Helm chart as an
+# OCI artefact and a tarball, and a GitHub Release. Pushes to main also publish
+# a :main image so the workshop can be tried against current code without
+# cutting a tag.
+#
+# The sample workshop is released separately (workshop.yaml) and always as
+# latest, so nothing here touches it.
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+# Deliberately no cancel-in-progress: cancelling half of a publish leaves an
+# image pushed with no release, or a release with no chart.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: read
+
+env:
+  # Lowercased at use: GHCR rejects an uppercase path, and GitHub owners may
+  # contain capitals.
+  REGISTRY: ghcr.io
+
+jobs:
+  # A tag can be pushed to any commit, including one CI never saw. Re-running
+  # the gate costs a few minutes; publishing an unverified artefact costs a
+  # retraction.
+  gate:
+    name: make ci-operator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache tools
+        uses: actions/cache@v4
+        with:
+          path: bin
+          key: ${{ runner.os }}-tools-${{ hashFiles('Makefile', 'go.mod') }}
+          restore-keys: ${{ runner.os }}-tools-
+
+      - run: make ci-operator
+
+  publish:
+    name: Publish image and chart
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release
+      packages: write # push to GHCR
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Derive names and version
+        id: vars
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "owner=${owner}" >>"${GITHUB_OUTPUT}"
+          echo "image=${REGISTRY}/${owner}/agentgateway-educates-operator" >>"${GITHUB_OUTPUT}"
+          echo "charts=oci://${REGISTRY}/${owner}/charts" >>"${GITHUB_OUTPUT}"
+
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+            echo "release=true" >>"${GITHUB_OUTPUT}"
+            echo "version=${tag}" >>"${GITHUB_OUTPUT}"
+            # Chart versions are semver and reject a leading v.
+            echo "chart_version=${tag#v}" >>"${GITHUB_OUTPUT}"
+          else
+            echo "release=false" >>"${GITHUB_OUTPUT}"
+            echo "version=main" >>"${GITHUB_OUTPUT}"
+            echo "chart_version=" >>"${GITHUB_OUTPUT}"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # linux/amd64 and linux/arm64 as one manifest list. The Dockerfile pins
+      # its builder to $BUILDPLATFORM and cross-compiles with GOOS/GOARCH, so
+      # neither architecture is built under emulation.
+      - name: Build and push the multiarch image
+        run: |
+          set -euo pipefail
+          make docker-buildx IMG="${IMAGE}:${VERSION}"
+          if [[ "${RELEASE}" == "true" ]]; then
+            make docker-buildx IMG="${IMAGE}:latest"
+          fi
+        env:
+          IMAGE: ${{ steps.vars.outputs.image }}
+          VERSION: ${{ steps.vars.outputs.version }}
+          RELEASE: ${{ steps.vars.outputs.release }}
+
+      - name: Confirm both architectures are present
+        run: docker buildx imagetools inspect "${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.version }}"
+
+      # Only tags produce a chart: a chart version is semver, and "main" is not.
+      - name: Package and push the chart
+        if: steps.vars.outputs.release == 'true'
+        run: |
+          set -euo pipefail
+          # The registry defaults live in Chart.yaml annotations and name the
+          # upstream org. A release built anywhere else must point at the image
+          # it actually pushed, or the chart installs a tag that does not exist.
+          # Stamped here rather than committed, so the working tree keeps the
+          # upstream identity.
+          yq -i '.annotations."educates.dev/image-registry-host" = strenv(REGISTRY)
+                 | .annotations."educates.dev/image-registry-namespace" = strenv(OWNER)' \
+            charts/agentgateway-educates-operator/Chart.yaml
+
+          # Version and appVersion likewise: the repository carries the
+          # development value (0.1.0) and releases carry the tag.
+          helm package charts/agentgateway-educates-operator \
+            --version "${CHART_VERSION}" \
+            --app-version "${VERSION}" \
+            --destination dist
+
+          helm registry login "${REGISTRY}" \
+            --username "${{ github.actor }}" \
+            --password "${{ secrets.GITHUB_TOKEN }}"
+          helm push "dist/agentgateway-educates-operator-${CHART_VERSION}.tgz" "${CHARTS}"
+        env:
+          CHART_VERSION: ${{ steps.vars.outputs.chart_version }}
+          VERSION: ${{ steps.vars.outputs.version }}
+          CHARTS: ${{ steps.vars.outputs.charts }}
+          OWNER: ${{ steps.vars.outputs.owner }}
+
+      - name: Create the GitHub Release
+        if: steps.vars.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*.tgz
+          fail_on_unmatched_files: true

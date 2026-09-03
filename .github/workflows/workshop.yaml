@@ -1,0 +1,54 @@
+# The sample workshop publisher.
+#
+# Published under a single moving tag, refreshed whenever the workshop changes
+# on main, so the sample always demonstrates current behaviour. Gating it on
+# operator releases would leave it stale in the gap between them.
+#
+# That tag is `main`, not `latest`: the action derives --workshop-version from
+# the ref basename and offers no input to override it. The workshop definition
+# refers to the image through $(workshop_version), so the two agree either way.
+#
+# Path-filtered: an operator commit that does not touch the workshop does not
+# rebuild an unchanged image.
+name: Publish workshop
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "sample-workshop/**"
+      - ".github/workflows/workshop.yaml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # the action attaches assets when run on a tag
+  packages: write # push the workshop image to GHCR
+
+jobs:
+  publish:
+    name: publish-workshop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Publishes sample-workshop/ to ghcr.io/<owner> and uploads the resolved
+      # workshop definition as a build artefact.
+      #
+      # The action also creates a GitHub Release, but guards that on
+      # startsWith(github.ref, 'refs/tags/'). This workflow never runs on a tag,
+      # so that step is inert here and cannot collide with the operator's own
+      # release. If this trigger ever gains a tag pattern, that stops being
+      # true — the two would then both try to own one release.
+      #
+      # Pinned to the v7 branch. The action publishes no tags or releases, so a
+      # branch is the version handle its maintainers offer; it is mutable, and a
+      # commit SHA would trade fixes for reproducibility.
+      - uses: educates/educates-github-actions/publish-workshop@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: sample-workshop

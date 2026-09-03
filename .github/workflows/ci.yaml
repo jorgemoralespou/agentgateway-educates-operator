@@ -1,0 +1,44 @@
+# The operator gate.
+#
+# One step, `make ci-operator`, because the Makefile owns what CI means: vendored
+# chart checksums, vet, build, generated-manifest drift, envtest, lint. Adding a
+# check here rather than there is how local and CI drift apart.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: make ci-operator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # controller-gen, setup-envtest and golangci-lint install themselves into
+      # bin/ under version-suffixed names, so caching that directory skips the
+      # reinstall on every run without risking a stale binary: a version bump
+      # changes the name and misses the cache.
+      - name: Cache tools
+        uses: actions/cache@v4
+        with:
+          path: bin
+          key: ${{ runner.os }}-tools-${{ hashFiles('Makefile', 'go.mod') }}
+          restore-keys: ${{ runner.os }}-tools-
+
+      - run: make ci-operator

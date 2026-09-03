@@ -1,0 +1,59 @@
+# The kind end-to-end job.
+#
+# Not on pull requests: it builds an image, stands up a cluster and installs the
+# platform, which is minutes rather than seconds. On main and on tags, where a
+# regression in cascading deletion would otherwise reach a release.
+#
+# The one assertion here is the one envtest cannot make — a real garbage
+# collector following an owner reference across namespaces (ADR-0002).
+name: E2E
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  kind:
+    name: make ci-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: agentgateway-e2e
+          # The Makefile creates the cluster if it is absent, so this action is
+          # here only to provide the kind binary and a cached node image.
+          install_only: true
+
+      - run: make ci-e2e
+
+      # Diagnostics for a failure that will not reproduce locally. Runs only on
+      # failure, so a green build stays quiet.
+      - name: Dump cluster state
+        if: failure()
+        run: |
+          kubectl get agentgatewayplatform,agentgatewaycatalog,agentgatewaysession -A -o wide || true
+          kubectl describe agentgatewayplatform cluster || true
+          kubectl logs -n agentgateway-operator-system \
+            -l app.kubernetes.io/name=agentgateway-educates-operator --tail=200 || true
+
+      - name: Delete the cluster
+        if: always()
+        run: make kind-delete
