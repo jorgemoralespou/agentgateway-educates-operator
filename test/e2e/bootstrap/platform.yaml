@@ -1,0 +1,12 @@
+# The platform declaration the kind e2e runs against.
+#
+# BundledAgentgateway so the run exercises the install path the operator owns,
+# and gatewayAPI: Managed so it gates on the CRDs the chart now installs
+# (ADR-0006) rather than on ones a cluster happened to have already.
+apiVersion: agentgateway.operators.educates.dev/v1alpha1
+kind: AgentGatewayPlatform
+metadata:
+  name: cluster
+spec:
+  provider: BundledAgentgateway
+  gatewayAPI: Managed
