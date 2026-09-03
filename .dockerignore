@@ -1,0 +1,5 @@
+bin/
+.git/
+.scratch/
+docs/
+cover.out

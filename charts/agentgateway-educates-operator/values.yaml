@@ -1,0 +1,38 @@
+# Values are overrides only. Publish-time registry defaults live in Chart.yaml
+# annotations, following the v4 installer.
+
+image:
+  # -- Full image repository including the registry, without a tag. Wins over
+  # the Chart.yaml annotations when set.
+  repository: ""
+  # -- Image tag. Defaults to the chart's appVersion.
+  tag: ""
+  # -- Pull policy. Empty derives it: Always for a floating tag, IfNotPresent
+  # otherwise.
+  pullPolicy: ""
+
+development:
+  # -- Override just the registry prefix, as {host, namespace}. For development
+  # builds pushed somewhere other than the published registry.
+  imageRegistry: {}
+
+imagePullSecrets: []
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# -- Leader election. On by default despite the single replica: it is what stops
+# two overlapping pods from both reconciling during a rollout, which for an
+# operator that installs Helm releases would mean two converges racing.
+leaderElection:
+  enabled: true
+
+# -- Gateway API CRDs. The operator's AgentGatewayPlatform gates on these being
+# present; installing them here rather than from a reconcile keeps a static,
+# versioned artefact out of the reconcile path. Set to false when an ingress
+# controller already owns them, and set `spec.gatewayAPI: Existing` on the
+# platform declaration to match.
+gatewayAPI:
+  install: true

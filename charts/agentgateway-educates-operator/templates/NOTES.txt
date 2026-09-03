@@ -1,0 +1,45 @@
+{{ .Chart.Name }} {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }}.
+
+This operator's ServiceAccount holds bind and escalate on ClusterRoles, which is
+approximately cluster-admin equivalent. It needs this to install agentgateway's
+RBAC-bearing charts. See the chart README before using it on a shared cluster.
+
+Nothing is installed until you declare a platform:
+
+    kubectl apply -f - <<'EOF'
+    apiVersion: agentgateway.operators.educates.dev/v1alpha1
+    kind: AgentGatewayPlatform
+    metadata:
+      name: cluster
+    spec:
+      provider: BundledAgentgateway
+    EOF
+
+Watch it come up:
+
+    kubectl get agentgatewayplatform cluster -w
+
+Then declare the models workshops may use, with credentials referenced by Secret
+name:
+
+    kubectl create secret generic openai-credentials \
+      --namespace agentgateway-system --from-literal=api-key=sk-...
+
+    kubectl apply -f - <<'EOF'
+    apiVersion: agentgateway.operators.educates.dev/v1alpha1
+    kind: AgentGatewayCatalog
+    metadata:
+      name: cluster
+    spec:
+      models:
+        - name: fast
+          provider: OpenAI
+          model: gpt-4o-mini
+          credentialRef:
+            name: openai-credentials
+    EOF
+
+A workshop author then adds one resource to session.objects and two environment
+variables to session.env. The AgentGatewaySession MUST carry
+`namespace: $(workshop_namespace)` — without it the attendee's pod cannot read
+the Secret it creates.

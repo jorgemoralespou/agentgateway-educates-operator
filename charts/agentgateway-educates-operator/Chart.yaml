@@ -1,0 +1,26 @@
+apiVersion: v2
+name: agentgateway-educates-operator
+description: |
+  Gives each Educates workshop attendee their own rate-limited LLM API key,
+  injected into their session as an environment variable.
+
+  Installs three CRDs: AgentGatewayPlatform installs and owns agentgateway
+  itself, AgentGatewayCatalog declares the models workshops may use, and
+  AgentGatewaySession is what a workshop author writes into session.objects.
+
+  A peer of educates-installer rather than a plugin: the v4 installer installs a
+  hard-coded list of embedded charts and has no third-party extension point.
+type: application
+annotations:
+  educates.dev/image-registry-host: "ghcr.io"
+  educates.dev/image-registry-namespace: "educates"
+version: 0.1.0
+appVersion: 0.1.0
+# agentgateway 1.5.x supports Kubernetes 1.32-1.37; Educates v4 requires 1.34+.
+kubeVersion: ">=1.32.0-0"
+home: https://educates.dev
+sources:
+  - https://github.com/educates/agentgateway-educates-operator
+maintainers:
+  - name: Educates Maintainers
+    url: https://github.com/educates

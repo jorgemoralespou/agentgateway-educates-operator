@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agentgateway-educates-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agentgateway-educates-operator.labels" . | nindent 4 }}
+spec:
+  # Single replica. Leader election still matters: it is what stops two
+  # overlapping pods from both converging Helm releases during a rollout.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "agentgateway-educates-operator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agentgateway-educates-operator.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "agentgateway-educates-operator.fullname" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: manager
+          image: "{{ include "agentgateway-educates-operator.image.repository" . }}:{{ include "agentgateway-educates-operator.image.tag" . }}"
+          imagePullPolicy: {{ include "agentgateway-educates-operator.image.pullPolicy" . }}
+          args:
+            - --health-probe-bind-address=:8081
+            # Metrics are off by default: nothing scrapes them in a workshop
+            # cluster, and serving them would mean managing a TLS certificate.
+            - --metrics-bind-address=0
+            {{- if .Values.leaderElection.enabled }}
+            - --leader-elect
+            {{- end }}
+          env:
+            # Required rather than defaulted: the operator holds its
+            # leader-election lease here, and a wrong guess would put it
+            # somewhere it may not be able to write.
+            - name: OPERATOR_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: probes
+              containerPort: 8081
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
