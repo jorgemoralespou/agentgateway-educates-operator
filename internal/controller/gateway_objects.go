@@ -18,10 +18,12 @@ import (
 // Gateway API and agentgateway resources are handled as unstructured objects
 // rather than typed ones.
 //
-// Their CRDs may not exist when the operator starts — this operator installs
-// them — and a typed client caches a REST mapping at startup, so every typed
-// call to a kind whose CRD appeared later fails until the pod restarts.
-// Unstructured access with an explicit GVK sidesteps that entirely.
+// Their CRDs may not exist when the operator starts — the Gateway API ones
+// arrive with this operator's Helm chart (ADR-0006) and agentgateway's arrive
+// from the charts the platform installs — and a typed client caches a REST
+// mapping at startup, so every typed call to a kind whose CRD appeared later
+// fails until the pod restarts. Unstructured access with an explicit GVK
+// sidesteps that entirely.
 
 func newGatewayClass() *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
@@ -197,12 +199,32 @@ func (r *AgentGatewayPlatformReconciler) ensureGatewayParametersRef(_ context.Co
 
 // gatewayAPIPresent reports whether the Gateway API CRDs are established, by
 // asking the REST mapper rather than reading CRD objects.
-func (r *AgentGatewayPlatformReconciler) gatewayAPIPresent(ctx context.Context) (bool, error) {
-	_, err := r.RESTMapper().RESTMapping(schema.GroupKind{
-		Group: GatewayAPIGroup,
-		Kind:  KindGateway,
-	}, GatewayAPIVersion)
-	if err != nil {
+//
+// A no-match is not taken at face value: the mapper caches, so it reports a
+// miss both when the CRDs are genuinely absent and when they were installed
+// after this mapper last looked. Those are indistinguishable from the error
+// alone, so a miss resets the mapper and asks once more. Without that, the
+// `gatewayAPI.install: false` path — where a cluster operator installs Gateway
+// API themselves after this operator is already running — would sit in
+// Installing until someone restarted the pod.
+func (r *AgentGatewayPlatformReconciler) gatewayAPIPresent(_ context.Context) (bool, error) {
+	gk := schema.GroupKind{Group: GatewayAPIGroup, Kind: KindGateway}
+
+	_, err := r.RESTMapper().RESTMapping(gk, GatewayAPIVersion)
+	if err == nil {
+		return true, nil
+	}
+	if !meta.IsNoMatchError(err) {
+		return false, err
+	}
+
+	resetter, ok := r.RESTMapper().(meta.ResettableRESTMapper)
+	if !ok {
+		return false, nil
+	}
+	resetter.Reset()
+
+	if _, err := r.RESTMapper().RESTMapping(gk, GatewayAPIVersion); err != nil {
 		if meta.IsNoMatchError(err) {
 			return false, nil
 		}
