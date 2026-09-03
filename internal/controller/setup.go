@@ -1,6 +1,9 @@
 package controller
 
 import (
+	"fmt"
+
+	"k8s.io/client-go/discovery"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/educates/agentgateway-educates-operator/internal/helm"
@@ -23,7 +26,30 @@ func SetupWithManager(mgr ctrl.Manager, helmClientFor HelmClientFactory, operato
 		Scheme:        mgr.GetScheme(),
 		HelmClientFor: helmClientFor,
 	}).SetupWithManager(mgr); err != nil {
-		return err
+		return fmt.Errorf("set up the platform controller: %w", err)
+	}
+
+	// A discovery client, not the manager's REST mapper: the catalog has to
+	// tell "agentgateway's CRDs are genuinely absent" apart from "my mapper is
+	// stale", and only a fresh probe can.
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(mgr.GetConfig())
+	if err != nil {
+		return fmt.Errorf("build discovery client: %w", err)
+	}
+
+	if err := (&AgentGatewayCatalogReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Discovery: discoveryClient,
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("set up the catalog controller: %w", err)
+	}
+
+	if err := (&AgentGatewaySessionReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("set up the session controller: %w", err)
 	}
 
 	return nil

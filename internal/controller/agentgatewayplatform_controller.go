@@ -161,6 +161,28 @@ func (r *AgentGatewayPlatformReconciler) reconcileBundled(ctx context.Context, p
 		return res, err
 	}
 
+	// Step 8: the rate-limit service and its counter store, so budgets can be
+	// enforced before any key exists to enforce them against.
+	if done, res, err := r.reconcileRateLimit(ctx, platform, namespace); !done {
+		return res, err
+	}
+
+	// Step 9: the single API-key policy. Last, because it targets the Gateway
+	// and references the rate-limit Service, both of which must exist first.
+	if err := r.ensurePolicy(ctx, platform, namespace); err != nil {
+		setCondition(&platform.Status.Conditions, platform.Generation,
+			agentgatewayv1alpha1.ConditionPolicyReady, metav1.ConditionFalse,
+			agentgatewayv1alpha1.ReasonFailed, err.Error())
+		platform.Status.Phase = agentgatewayv1alpha1.PlatformFailed
+		if statusErr := r.updateStatus(ctx, platform); statusErr != nil {
+			logf.FromContext(ctx).Error(statusErr, "recording policy failure")
+		}
+		return ctrl.Result{}, err
+	}
+	setCondition(&platform.Status.Conditions, platform.Generation,
+		agentgatewayv1alpha1.ConditionPolicyReady, metav1.ConditionTrue,
+		agentgatewayv1alpha1.ReasonReady, "the API-key policy is applied")
+
 	r.markReady(platform, namespace)
 	return ctrl.Result{}, r.updateStatus(ctx, platform)
 }

@@ -46,7 +46,7 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 			Metrics: metricsserver.Options{BindAddress: "0"},
 			// Each spec starts a fresh manager, and controller-runtime
 			// otherwise rejects a second controller with the same name.
-			Controller: crconfig.Controller{SkipNameValidation: ptr(true)},
+			Controller: crconfig.Controller{SkipNameValidation: ptrTo(true)},
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -238,20 +238,11 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 	Describe("readiness", func() {
 		It("gates on Programmed plus the data-plane Deployment, never on the Gateway's addresses", func() {
 			createPlatform()
-			markDeploymentAvailable(testGatewayNamespace, AgentgatewayReleaseName)
-			createAcceptedGatewayClass()
 
-			Eventually(func() error {
-				gw := newGateway()
-				return k8sClient.Get(ctx,
-					types.NamespacedName{Namespace: testGatewayNamespace, Name: GatewayName}, gw)
-			}, pollTimeout, pollInterval).Should(Succeed())
-
-			// Programmed, but deliberately with no addresses at all — the
+			// driveToReady programs the Gateway with no addresses at all — the
 			// LoadBalancer-without-a-provider case. Readiness must not depend
 			// on them.
-			markGatewayProgrammed(testGatewayNamespace, GatewayName)
-			markDeploymentAvailable(testGatewayNamespace, GatewayName)
+			driveToReady()
 
 			Eventually(func() metav1.ConditionStatus {
 				return conditionStatus(agentgatewayv1alpha1.ConditionReady)
@@ -262,6 +253,16 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 			Expect(platform.Status.GatewayURL).To(Equal(
 				"http://agentgateway.agentgateway-system.svc.cluster.local:4000"))
 			Expect(platform.Status.GatewayNamespace).To(Equal(testGatewayNamespace))
+
+			// The Gateway carries no addresses, confirming readiness did not
+			// come from them.
+			gw := newGateway()
+			Expect(k8sClient.Get(ctx,
+				types.NamespacedName{Namespace: testGatewayNamespace, Name: GatewayName}, gw)).To(Succeed())
+			addresses, found, err := unstructured.NestedSlice(gw.Object, "status", "addresses")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found && len(addresses) > 0).To(BeFalse(),
+				"the fixture must leave the Gateway address-less for this assertion to mean anything")
 		})
 
 		It("does not become Ready while the data-plane Deployment is unavailable", func() {
@@ -367,17 +368,7 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 	Describe("idempotency", func() {
 		It("a second reconcile changes nothing", func() {
 			createPlatform()
-			markDeploymentAvailable(testGatewayNamespace, AgentgatewayReleaseName)
-			createAcceptedGatewayClass()
-
-			Eventually(func() error {
-				gw := newGateway()
-				return k8sClient.Get(ctx,
-					types.NamespacedName{Namespace: testGatewayNamespace, Name: GatewayName}, gw)
-			}, pollTimeout, pollInterval).Should(Succeed())
-
-			markGatewayProgrammed(testGatewayNamespace, GatewayName)
-			markDeploymentAvailable(testGatewayNamespace, GatewayName)
+			driveToReady()
 
 			Eventually(func() metav1.ConditionStatus {
 				return conditionStatus(agentgatewayv1alpha1.ConditionReady)
@@ -409,5 +400,3 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 		})
 	})
 })
-
-func ptr[T any](v T) *T { return &v }

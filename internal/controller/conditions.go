@@ -1,8 +1,8 @@
 package controller
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // setCondition sets a condition on a slice, preserving LastTransitionTime when

@@ -244,3 +244,39 @@ func cleanupGatewayObjects() {
 
 	_ = k8sClient.DeleteAllOf(ctx, &appsv1.Deployment{}, client.InNamespace(testGatewayNamespace))
 }
+
+// driveToReady walks a platform declaration all the way to Ready, standing in
+// for every upstream controller envtest does not run.
+//
+// Each call names the signal it is simulating, so a spec that fails here says
+// which upstream behaviour stopped happening.
+func driveToReady() {
+	GinkgoHelper()
+
+	// The agentgateway chart's control-plane Deployment, rolled out.
+	markDeploymentAvailable(testGatewayNamespace, AgentgatewayReleaseName)
+
+	// agentgateway's controller creating and accepting the GatewayClass, which
+	// it does only after leader election.
+	createAcceptedGatewayClass()
+
+	// The operator creates the Gateway once the GatewayClass is Accepted.
+	Eventually(func() error {
+		gw := newGateway()
+		return k8sClient.Get(ctx,
+			types.NamespacedName{Namespace: testGatewayNamespace, Name: GatewayName}, gw)
+	}, pollTimeout, pollInterval).Should(Succeed())
+
+	// agentgateway programming the Gateway and provisioning its data plane.
+	// Deliberately no addresses: readiness must not depend on them.
+	markGatewayProgrammed(testGatewayNamespace, GatewayName)
+	markDeploymentAvailable(testGatewayNamespace, GatewayName)
+
+	// The rate-limit service the operator renders, rolled out.
+	Eventually(func() error {
+		return k8sClient.Get(ctx, types.NamespacedName{
+			Namespace: testGatewayNamespace, Name: RateLimitServiceName,
+		}, &appsv1.Deployment{})
+	}, pollTimeout, pollInterval).Should(Succeed())
+	markDeploymentAvailable(testGatewayNamespace, RateLimitServiceName)
+}

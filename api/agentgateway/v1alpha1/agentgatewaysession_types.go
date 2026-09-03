@@ -158,7 +158,7 @@ const (
 	SessionLabel = "agentgateway.operators.educates.dev/session"
 
 	// SessionNamespaceLabel records the namespace the grant was created in.
-	SessionNamespaceLabel = "agentgateway.operators.educates.dev/session-namespace"
+	SessionNSLabel = "agentgateway.operators.educates.dev/session-namespace"
 )
 
 // CatalogName returns the referenced catalog name, defaulted to the singleton.

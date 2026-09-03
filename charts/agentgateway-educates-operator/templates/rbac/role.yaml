@@ -38,7 +38,9 @@ rules:
 - apiGroups:
   - agentgateway.operators.educates.dev
   resources:
+  - agentgatewaycatalogs
   - agentgatewayplatforms
+  - agentgatewaysessions
   verbs:
   - create
   - delete
@@ -50,16 +52,19 @@ rules:
 - apiGroups:
   - agentgateway.operators.educates.dev
   resources:
-  - agentgatewayplatforms/finalizers
+  - agentgatewaycatalogs/status
+  - agentgatewayplatforms/status
+  - agentgatewaysessions/status
   verbs:
+  - get
+  - patch
   - update
 - apiGroups:
   - agentgateway.operators.educates.dev
   resources:
-  - agentgatewayplatforms/status
+  - agentgatewayplatforms/finalizers
+  - agentgatewaysessions/finalizers
   verbs:
-  - get
-  - patch
   - update
 - apiGroups:
   - apiextensions.k8s.io
