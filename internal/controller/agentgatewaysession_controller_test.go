@@ -433,6 +433,63 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 			}, pollTimeout, pollInterval).Should(BeTrue())
 		})
 
+		// The bounded window. A finalizer that cannot complete holds the whole
+		// session namespace in Terminating, which is worse than leaking a hash
+		// whose plaintext is already gone (ADR-0002).
+		//
+		// Cleanup is made to fail by giving the registration a finalizer of its
+		// own that nothing removes: the delete is accepted but never completes,
+		// so the operator's cleanup can never succeed however long it retries.
+		It("releases the finalizer once the bounded window expires, even when cleanup keeps failing", func() {
+			session := createSession("ws-011")
+
+			Eventually(func() metav1.ConditionStatus {
+				return sessionCondition(session, agentgatewayv1alpha1.ConditionReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			// Wedge the registration: a finalizer nothing will ever remove means
+			// the delete is accepted but never completes, so the ConfigMap
+			// stays and the operator's cleanup can never succeed.
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: testGatewayNamespace, Name: "ws-011-agentgateway",
+			}, cm)).To(Succeed())
+			cm.Finalizers = []string{"example.test/never-removed"}
+			Expect(k8sClient.Update(ctx, cm)).To(Succeed())
+
+			live := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-011",
+			}, live)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, live)).To(Succeed())
+
+			// The grant must go away regardless, once the window has passed.
+			// Without the bound this would hang forever, holding the namespace.
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: workshopNamespace, Name: "ws-011",
+				}, &agentgatewayv1alpha1.AgentGatewaySession{})
+				return apierrors.IsNotFound(err)
+			}, pollTimeout, pollInterval).Should(BeTrue(),
+				"the finalizer must give up rather than wedge the session namespace")
+
+			// And it gave up rather than succeeding: the registration is still
+			// there, in Terminating, which is the leak the bound trades for.
+			stuck := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: testGatewayNamespace, Name: "ws-011-agentgateway",
+			}, stuck)).To(Succeed())
+			Expect(stuck.DeletionTimestamp).NotTo(BeNil(),
+				"the registration should have been asked to delete")
+
+			// Recoverable by the documented sweep: the labels make it findable.
+			Expect(stuck.Labels).To(HaveKeyWithValue(agentgatewayv1alpha1.SessionLabel, "ws-011"))
+
+			// Let the fixture clean up.
+			stuck.Finalizers = nil
+			Expect(k8sClient.Update(ctx, stuck)).To(Succeed())
+		})
+
 		// A gateway namespace that is gone means the registration is gone with
 		// it. Counted as success rather than retried, so platform teardown does
 		// not strand every session behind a finalizer.

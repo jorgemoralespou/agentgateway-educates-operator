@@ -176,6 +176,27 @@ func (s *AgentGatewaySession) ResourceName() string {
 	return s.Name + SecretSuffix
 }
 
+// DefaultTokenBudget is the ceiling applied when a grant does not set one.
+// Matches the CRD's own default, so the two cannot drift.
+const DefaultTokenBudget int64 = 100000
+
+// DefaultTTL is the backstop expiry applied when a grant does not set one.
+// Matches the CRD's own default, so the two cannot drift.
+const DefaultTTL = "4h"
+
+// TokenBudget returns the session's token ceiling, defaulted.
+//
+// Defaulted here as well as in the CRD because a grant created before the
+// default existed, or through a client that strips zero values, would otherwise
+// register a budget of zero — which the gateway would read as "no tokens at
+// all" and reject every request the attendee makes.
+func (s *AgentGatewaySession) TokenBudget() int64 {
+	if s.Spec.TokenBudget > 0 {
+		return s.Spec.TokenBudget
+	}
+	return DefaultTokenBudget
+}
+
 func init() {
 	register(&AgentGatewaySession{}, &AgentGatewaySessionList{})
 }

@@ -80,17 +80,24 @@ func (r *AgentGatewayPlatformReconciler) reconcileRateLimit(ctx context.Context,
 // ensureRateLimitConfig writes the rate-limit service's domain configuration.
 //
 // The descriptor here must match the one in the policy: the policy names the
-// domain and the descriptor key, and the service decides what limit applies.
-// The limit itself is per-session and comes from each key's own budget, so this
-// config only has to establish the descriptor's existence.
+// domain and the descriptor key, and this file declares that the key exists.
+//
+// The value below is only a fallback. A shared config file cannot hold a row
+// per attendee — that is exactly the contention the one-registration-per-session
+// design avoids — so the real per-session ceiling travels on each key's own
+// registration and reaches the service through the policy's limitOverride
+// (ADR-0003). This entry applies only to a request whose registration carries no
+// budget, which should not happen, and is deliberately equal to the default
+// budget rather than something permissive: a key with no budget should be
+// treated as an ordinary attendee, not an unlimited one.
 func (r *AgentGatewayPlatformReconciler) ensureRateLimitConfig(ctx context.Context, platform *agentgatewayv1alpha1.AgentGatewayPlatform, namespace string) error {
 	config := fmt.Sprintf(`domain: %s
 descriptors:
   - key: %s
     rate_limit:
       unit: hour
-      requests_per_unit: 1000000
-`, RateLimitDomain, metadataKeySession)
+      requests_per_unit: %d
+`, RateLimitDomain, metadataKeySession, agentgatewayv1alpha1.DefaultTokenBudget)
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{

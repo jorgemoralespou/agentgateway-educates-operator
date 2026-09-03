@@ -11,6 +11,28 @@ import (
 	agentgatewayv1alpha1 "github.com/educates/agentgateway-educates-operator/api/agentgateway/v1alpha1"
 )
 
+// tokenBudgetOverrideExpression reads each attendee's own token ceiling off
+// their key registration.
+//
+// agentgateway's limitOverride must evaluate to an object with `unit` and
+// `requestsPerUnit`. Combined with the descriptor's `unit: Tokens`, the count
+// being limited is tokens rather than requests.
+//
+// `hour` is the window. The budget is documented as a ceiling for the session's
+// lifetime, and a workshop is shorter than that, so an hourly window is the
+// closest thing the rate-limit service offers to a lifetime cap. It does mean
+// an attendee in a session longer than an hour gets a fresh allowance — an
+// acceptable trade for a disposable workshop cluster, and the TTL bounds the
+// key's life regardless.
+//
+// Registration metadata is map[string]string, so the value is parsed back to an
+// integer here. A registration written by an older operator may not carry the
+// field at all, so a missing or unparseable value falls back to the default
+// rather than failing the request.
+const tokenBudgetOverrideExpression = `has(apiKey.tokenBudget) ? ` +
+	`{"unit": "hour", "requestsPerUnit": int(apiKey.tokenBudget)} : ` +
+	`{"unit": "hour", "requestsPerUnit": 100000}`
+
 // ensurePolicy renders the single API-key policy.
 //
 // Exactly one policy, cluster-wide. API-key policies *replace* rather than merge
@@ -113,6 +135,15 @@ func renderPolicySpec(platform *agentgatewayv1alpha1.AgentGatewayPlatform, names
 									"expression": "apiKey." + metadataKeySession,
 								},
 							},
+							// The per-session ceiling, read back off the
+							// attendee's own registration.
+							//
+							// This is what makes the budget per-attendee rather
+							// than per-cluster: one shared rate-limit config
+							// cannot hold a row per session, but each key
+							// carries its own limit and CEL reads it here
+							// (ADR-0003).
+							"limitOverride": tokenBudgetOverrideExpression,
 						},
 					},
 				},

@@ -138,10 +138,14 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 		agentgatewayv1alpha1.ReasonReady,
 		fmt.Sprintf("participant key written to Secret %s/%s", session.Namespace, session.ResourceName()))
 
-	// The registration carries only the hash. A lost Secret is repaired by
-	// generating a new key and updating the registration, which makes rotation
-	// the recovery path (ADR-0004).
-	if err := r.ensureRegistration(ctx, session, gatewayNamespace, key); err != nil {
+	// Computed once and used for both the registration and status, so the
+	// expiry an operator reads is the one the gateway actually enforces.
+	expiresAt := r.expiryFor(session)
+
+	// The registration carries the hash, the budget and the expiry — never key
+	// material. A lost Secret is repaired by generating a new key and updating
+	// the registration, which makes rotation the recovery path (ADR-0004).
+	if err := r.ensureRegistration(ctx, session, gatewayNamespace, key, expiresAt); err != nil {
 		setCondition(&session.Status.Conditions, session.Generation,
 			agentgatewayv1alpha1.ConditionKeyRegistered, metav1.ConditionFalse,
 			agentgatewayv1alpha1.ReasonFailed, err.Error())
@@ -162,7 +166,7 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 	// into a support conversation.
 	session.Status.SecretRef = &agentgatewayv1alpha1.SecretReference{Name: session.ResourceName()}
 	session.Status.GatewayURL = gatewayURL
-	session.Status.ExpiresAt = r.expiryFor(session)
+	session.Status.ExpiresAt = &metav1.Time{Time: expiresAt}
 	session.Status.Phase = agentgatewayv1alpha1.SessionReady
 
 	setCondition(&session.Status.Conditions, session.Generation,
@@ -378,11 +382,11 @@ func (r *AgentGatewaySessionReconciler) sessionNamespaceName(session *agentgatew
 // attendee: thirty concurrent workshop starts would otherwise contend on a
 // single hot object, and duplicate keys across ConfigMaps are documented
 // upstream as undefined.
-func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession, gatewayNamespace, key string) error {
+func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession, gatewayNamespace, key string, expiresAt time.Time) error {
 	name := session.ResourceName()
 	hash := participantkey.Hash(key)
 
-	payload, err := renderRegistration(hash, session.Name)
+	payload, err := renderRegistration(hash, session.Name, session.TokenBudget(), expiresAt)
 	if err != nil {
 		return err
 	}
@@ -445,19 +449,21 @@ func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, 
 // Every key carries a TTL because force-deleting a namespace strips finalizers
 // and orphans the registration outright; this is the only protection in that
 // case (ADR-0002).
-func (r *AgentGatewaySessionReconciler) expiryFor(session *agentgatewayv1alpha1.AgentGatewaySession) *metav1.Time {
+func (r *AgentGatewaySessionReconciler) expiryFor(session *agentgatewayv1alpha1.AgentGatewaySession) time.Time {
 	ttl := session.Spec.TTL
 	if ttl == "" {
-		ttl = "4h"
+		ttl = agentgatewayv1alpha1.DefaultTTL
 	}
 	d, err := time.ParseDuration(ttl)
 	if err != nil {
 		// The CRD pattern constrains this, so a parse failure here means the
 		// pattern and this code disagree. Fall back rather than fail the grant.
-		d = 4 * time.Hour
+		d, _ = time.ParseDuration(agentgatewayv1alpha1.DefaultTTL)
 	}
-	expiry := metav1.NewTime(session.CreationTimestamp.Add(d))
-	return &expiry
+
+	// Measured from creation rather than from now, so a re-reconcile does not
+	// keep pushing the expiry out and defeat the backstop.
+	return session.CreationTimestamp.Add(d)
 }
 
 // updateSessionStatus writes status, re-reading under conflict.
