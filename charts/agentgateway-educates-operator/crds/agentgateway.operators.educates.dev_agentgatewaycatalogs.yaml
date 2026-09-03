@@ -142,6 +142,27 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+              rateLimit:
+                description: |-
+                  RateLimit configures how token-budget enforcement behaves.
+
+                  It lives on the catalog rather than the platform because it is a choice
+                  about serving LLM traffic, which is what the catalog governs, and the
+                  platform's job is installing the gateway rather than deciding how it
+                  behaves under load.
+                properties:
+                  failureMode:
+                    default: FailClosed
+                    description: |-
+                      FailureMode decides whether a rate-limit service outage stops LLM traffic
+                      or removes enforcement. Always written explicitly into the rendered
+                      policy: the agentgateway CRD declares no schema default, so an omitted
+                      value leaves the field absent and only the data plane applies FailClosed.
+                    enum:
+                    - FailClosed
+                    - FailOpen
+                    type: string
+                type: object
             required:
             - models
             type: object

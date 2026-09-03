@@ -350,6 +350,18 @@ func (r *AgentGatewayCatalogReconciler) SetupWithManager(mgr ctrl.Manager) error
 		Complete(r)
 }
 
+// mapCatalogToPlatform wakes the platform when the catalog changes.
+//
+// The API-key policy is rendered by the platform controller — it must be
+// exactly one object, in the namespace the platform owns — but its failureMode
+// is a catalog setting. Without this, changing the failure mode would sit unread
+// until the next platform reconcile.
+func mapCatalogToPlatform(_ context.Context, _ client.Object) []reconcile.Request {
+	return []reconcile.Request{{
+		NamespacedName: types.NamespacedName{Name: agentgatewayv1alpha1.SingletonName},
+	}}
+}
+
 // mapPlatformToCatalog wakes the catalog singleton when the platform changes.
 func mapPlatformToCatalog(_ context.Context, _ client.Object) []reconcile.Request {
 	return []reconcile.Request{{

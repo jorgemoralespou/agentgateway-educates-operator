@@ -40,8 +40,23 @@ const tokenBudgetOverrideExpression = `has(apiKey.tokenBudget) ? ` +
 // order, with no error surfaced, and attendees would lose access
 // non-deterministically (ADR-0002). That is why the name is a constant and
 // nothing here is per-workshop.
-func (r *AgentGatewayPlatformReconciler) ensurePolicy(ctx context.Context, platform *agentgatewayv1alpha1.AgentGatewayPlatform, namespace string) error {
-	spec := renderPolicySpec(platform, namespace)
+func (r *AgentGatewayPlatformReconciler) ensurePolicy(ctx context.Context, namespace string) error {
+	// The failure mode is a catalog setting, because it is a choice about
+	// serving LLM traffic rather than about installing a gateway. The policy is
+	// rendered here because it must be exactly one object and the platform owns
+	// the gateway namespace, so the value is read across rather than passed in.
+	//
+	// A catalog that does not exist yet leaves the default in place; the catalog
+	// controller re-renders the policy when it becomes ready.
+	failureMode := agentgatewayv1alpha1.FailClosed
+	catalog := &agentgatewayv1alpha1.AgentGatewayCatalog{}
+	if err := r.Get(ctx, types.NamespacedName{Name: agentgatewayv1alpha1.SingletonName}, catalog); err == nil {
+		failureMode = catalog.FailureMode()
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	spec := renderPolicySpec(failureMode, namespace)
 
 	live := newPolicy()
 	err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: PolicyName}, live)
@@ -73,7 +88,7 @@ func (r *AgentGatewayPlatformReconciler) ensurePolicy(ctx context.Context, platf
 //
 // Split out as a pure function so the descriptor shape — the part that is easy
 // to get subtly wrong and expensive to debug on a cluster — is unit-testable.
-func renderPolicySpec(platform *agentgatewayv1alpha1.AgentGatewayPlatform, namespace string) map[string]any {
+func renderPolicySpec(failureMode agentgatewayv1alpha1.RateLimitFailureMode, namespace string) map[string]any {
 	return map[string]any{
 		// targetRefs has no namespace field: the target must be in the policy's
 		// own namespace. That restriction is the whole reason registrations
@@ -115,7 +130,7 @@ func renderPolicySpec(platform *agentgatewayv1alpha1.AgentGatewayPlatform, names
 					// Always written explicitly: the CRD declares no schema
 					// default, so omitting it would leave the field absent and
 					// leave the choice to the data plane (ADR-0003).
-					"failureMode": string(platform.FailureMode()),
+					"failureMode": string(failureMode),
 					"descriptors": []any{
 						map[string]any{
 							// Tokens, not Requests: one request with a large

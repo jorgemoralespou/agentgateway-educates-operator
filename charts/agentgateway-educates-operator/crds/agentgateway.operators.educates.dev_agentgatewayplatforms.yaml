@@ -115,21 +115,6 @@ spec:
                 - BundledAgentgateway
                 - ExternalAgentgateway
                 type: string
-              rateLimit:
-                description: RateLimit configures token-budget enforcement.
-                properties:
-                  failureMode:
-                    default: FailClosed
-                    description: |-
-                      FailureMode decides whether a rate-limit service outage stops LLM traffic
-                      or removes enforcement. Always written explicitly into the rendered
-                      policy: the agentgateway CRD declares no schema default, so an omitted
-                      value leaves the field absent and only the data plane applies FailClosed.
-                    enum:
-                    - FailClosed
-                    - FailOpen
-                    type: string
-                type: object
             type: object
           status:
             description: |-

@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
@@ -67,6 +68,11 @@ type AgentGatewayPlatformReconciler struct {
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 
+// The Educates cluster config is read as an input contract and never written.
+// Read-only, and only its status (the v4 contract), so a missing CRD is
+// tolerated rather than fatal.
+// +kubebuilder:rbac:groups=config.educates.dev,resources=educatesclusterconfigs,verbs=get;list;watch
+
 // Gateway API and agentgateway's own resources. The operator creates the
 // Gateway and the parameters overlay, and waits for the GatewayClass.
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways;gatewayclasses,verbs=get;list;watch;create;update;patch;delete
@@ -113,6 +119,16 @@ func (r *AgentGatewayPlatformReconciler) Reconcile(ctx context.Context, req ctrl
 // reconcileBundled runs the ordered install, each step gating the next.
 func (r *AgentGatewayPlatformReconciler) reconcileBundled(ctx context.Context, platform *agentgatewayv1alpha1.AgentGatewayPlatform) (ctrl.Result, error) {
 	namespace := platform.GatewayNamespace()
+
+	// The Educates cluster config is surfaced as its own condition but does not
+	// gate the install: a missing or not-yet-ready cluster config is "not ready
+	// yet", never an error, and the gateway is perfectly usable on a cluster
+	// that has no Educates at all. Reporting it separately is what lets a
+	// cluster operator tell "my cluster config is wrong" apart from "this
+	// operator is broken".
+	if err := r.reconcileClusterConfig(ctx, platform); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	if err := r.ensureNamespace(ctx, namespace, platform); err != nil {
 		return ctrl.Result{}, err
@@ -169,7 +185,7 @@ func (r *AgentGatewayPlatformReconciler) reconcileBundled(ctx context.Context, p
 
 	// Step 9: the single API-key policy. Last, because it targets the Gateway
 	// and references the rate-limit Service, both of which must exist first.
-	if err := r.ensurePolicy(ctx, platform, namespace); err != nil {
+	if err := r.ensurePolicy(ctx, namespace); err != nil {
 		setCondition(&platform.Status.Conditions, platform.Generation,
 			agentgatewayv1alpha1.ConditionPolicyReady, metav1.ConditionFalse,
 			agentgatewayv1alpha1.ReasonFailed, err.Error())
@@ -226,6 +242,34 @@ func (r *AgentGatewayPlatformReconciler) reconcileExternal(ctx context.Context, 
 
 	r.markReady(platform, ext.Namespace)
 	return ctrl.Result{}, r.updateStatus(ctx, platform)
+}
+
+// reconcileClusterConfig surfaces the Educates cluster config's readiness as a
+// condition.
+//
+// Deliberately non-gating. The v4 installer's own components block on this, but
+// they are useless without it; this operator's gateway is not, so a cluster
+// without Educates gets a working gateway and an honest condition rather than a
+// permanently pending install.
+func (r *AgentGatewayPlatformReconciler) reconcileClusterConfig(ctx context.Context, platform *agentgatewayv1alpha1.AgentGatewayPlatform) error {
+	state, err := clusterConfigStatus(ctx, r.Client)
+	if err != nil {
+		return err
+	}
+
+	status := metav1.ConditionFalse
+	reason := agentgatewayv1alpha1.ReasonWaiting
+	switch {
+	case state.Ready:
+		status = metav1.ConditionTrue
+		reason = agentgatewayv1alpha1.ReasonReady
+	case !state.Present:
+		reason = agentgatewayv1alpha1.ReasonNotFound
+	}
+
+	setCondition(&platform.Status.Conditions, platform.Generation,
+		agentgatewayv1alpha1.ConditionClusterConfigAvailable, status, reason, state.Message)
+	return nil
 }
 
 // reconcileGatewayAPI applies the Gateway API CRDs unless they are declared
@@ -567,6 +611,10 @@ func (r *AgentGatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) erro
 		For(&agentgatewayv1alpha1.AgentGatewayPlatform{},
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&corev1.Namespace{}).
+		// The policy this controller renders takes its failureMode from the
+		// catalog, so a catalog change has to wake it.
+		Watches(&agentgatewayv1alpha1.AgentGatewayCatalog{},
+			handler.EnqueueRequestsFromMapFunc(mapCatalogToPlatform)).
 		Named("agentgatewayplatform").
 		Complete(r)
 }

@@ -104,6 +104,14 @@ rules:
   - update
   - watch
 - apiGroups:
+  - config.educates.dev
+  resources:
+  - educatesclusterconfigs
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - gateway.networking.k8s.io
   resources:
   - gatewayclasses

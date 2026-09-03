@@ -83,6 +83,15 @@ type AgentGatewayCatalogSpec struct {
 	// +listType=map
 	// +listMapKey=name
 	Models []CatalogModel `json:"models"`
+
+	// RateLimit configures how token-budget enforcement behaves.
+	//
+	// It lives on the catalog rather than the platform because it is a choice
+	// about serving LLM traffic, which is what the catalog governs, and the
+	// platform's job is installing the gateway rather than deciding how it
+	// behaves under load.
+	// +optional
+	RateLimit *RateLimitSpec `json:"rateLimit,omitempty"`
 }
 
 // CatalogPhase is an advisory summary. Conditions are authoritative.
@@ -166,4 +175,18 @@ func (m CatalogModel) CredentialKey() string {
 
 func init() {
 	register(&AgentGatewayCatalog{}, &AgentGatewayCatalogList{})
+}
+
+// FailureMode returns the configured rate-limit failure mode, defaulted.
+//
+// Defaulted to FailClosed: agentgateway's CRD declares no schema default, so an
+// omitted value would leave the field absent from the rendered policy and leave
+// the choice to the data plane. For a workshop, an outage that silently removes
+// budget enforcement is worse than one that visibly stops traffic (ADR-0003) —
+// but it stays a cluster-operator decision, not this operator's.
+func (c *AgentGatewayCatalog) FailureMode() RateLimitFailureMode {
+	if c.Spec.RateLimit != nil && c.Spec.RateLimit.FailureMode != "" {
+		return c.Spec.RateLimit.FailureMode
+	}
+	return FailClosed
 }

@@ -119,10 +119,6 @@ type AgentGatewayPlatformSpec struct {
 	// Required when provider is ExternalAgentgateway.
 	// +optional
 	ExternalAgentgateway *ExternalAgentgatewaySpec `json:"externalAgentgateway,omitempty"`
-
-	// RateLimit configures token-budget enforcement.
-	// +optional
-	RateLimit *RateLimitSpec `json:"rateLimit,omitempty"`
 }
 
 // PlatformPhase is an advisory summary of the install. Conditions are
@@ -226,14 +222,6 @@ func (p *AgentGatewayPlatform) GatewayNamespace() string {
 		return p.Spec.BundledAgentgateway.Namespace
 	}
 	return DefaultGatewayNamespace
-}
-
-// FailureMode returns the configured rate-limit failure mode, defaulted.
-func (p *AgentGatewayPlatform) FailureMode() RateLimitFailureMode {
-	if p.Spec.RateLimit != nil && p.Spec.RateLimit.FailureMode != "" {
-		return p.Spec.RateLimit.FailureMode
-	}
-	return FailClosed
 }
 
 // DefaultGatewayNamespace is where the bundled gateway is installed when the

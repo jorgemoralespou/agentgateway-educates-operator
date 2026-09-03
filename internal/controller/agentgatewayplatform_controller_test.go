@@ -396,11 +396,12 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 			before, err := hc.Status(AgentgatewayReleaseName)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Force another pass by bumping the spec.
+			// Force another pass by bumping the spec. Restating the Gateway API
+			// setting at its current value changes the generation without
+			// changing anything the converge would render, which is exactly the
+			// case under test.
 			platform := getPlatform()
-			platform.Spec.RateLimit = &agentgatewayv1alpha1.RateLimitSpec{
-				FailureMode: agentgatewayv1alpha1.FailClosed,
-			}
+			platform.Spec.GatewayAPI = agentgatewayv1alpha1.GatewayAPIExisting
 			Expect(k8sClient.Update(ctx, platform)).To(Succeed())
 
 			Eventually(func() int64 {
