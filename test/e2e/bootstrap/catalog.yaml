@@ -10,9 +10,19 @@ metadata:
   name: cluster
 spec:
   models:
-    - name: fast
-      provider: Anthropic
-      model: claude-haiku-4-5-20251001
-      credentialRef:
-        name: agentgateway-provider-credentials
-        key: api-key
+  - baseURL: http://ollama.educates.test:11434
+    credentialRef:
+      key: api-key
+      name: agentgateway-provider-credentials
+    model: llama3.2:latest
+    name: fast
+    provider: Ollama
+  - baseURL: http://ollama.educates.test:11434
+    credentialRef:
+      key: api-key
+      name: agentgateway-provider-credentials
+    model: llama3.2:latest
+    name: smart
+    provider: Ollama
+  rateLimit:
+    failureMode: FailClosed

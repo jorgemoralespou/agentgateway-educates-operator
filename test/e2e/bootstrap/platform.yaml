@@ -10,3 +10,5 @@ metadata:
 spec:
   provider: BundledAgentgateway
   gatewayAPI: Managed
+  adminInterface:
+    exposed: true
