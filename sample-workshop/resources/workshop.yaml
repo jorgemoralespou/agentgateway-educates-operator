@@ -46,6 +46,19 @@ spec:
       # session's service account lives and where the operator places the
       # Secret. The subject namespace below is $(workshop_namespace) for the
       # same reason; $(session_namespace) is the common mistake here.
+      #
+      # This Role requires the operator's chart to be installed with
+      # `educates.extendSessionManagerPermissions` (the default). Kubernetes
+      # forbids granting permissions the creator does not hold, and Educates'
+      # session-manager creates this object, so without the ClusterRole that
+      # chart aggregates into session-manager the whole WorkshopSession fails:
+      #
+      #   ...-agentgateway-reader is forbidden: user
+      #   "system:serviceaccount:educates:session-manager" is attempting to
+      #   grant RBAC permissions not currently held
+      #
+      # Drop this Role and the RoleBinding if the workshop content does not
+      # need attendees to read their own grant.
       - apiVersion: rbac.authorization.k8s.io/v1
         kind: Role
         metadata:

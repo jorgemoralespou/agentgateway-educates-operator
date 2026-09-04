@@ -22,6 +22,49 @@ If that is not acceptable, install agentgateway yourself and point this operator
 at it with `provider: ExternalAgentgateway`. It then installs nothing and needs
 no such permission.
 
+### Educates' session-manager needs permission on this operator's kind
+
+Educates' session-manager creates the objects in a workshop's `session.objects`,
+and holds no permissions on this operator's API group by default. That breaks a
+workshop in two places.
+
+It cannot create the attendee's `AgentGatewaySession`:
+
+```
+agentgatewaysessions.agentgateway.operators.educates.dev is forbidden:
+User "system:serviceaccount:educates:session-manager" cannot create resource
+"agentgatewaysessions" in API group "agentgateway.operators.educates.dev"
+```
+
+And, by the same escalation rule as above, it cannot grant an attendee a Role to
+read their own session — a grantor must already hold what it grants:
+
+```
+roles.rbac.authorization.k8s.io "...-agentgateway-reader" is forbidden:
+user "system:serviceaccount:educates:session-manager" is attempting to grant
+RBAC permissions not currently held:
+{APIGroups:["agentgateway.operators.educates.dev"],
+ Resources:["agentgatewaysessions"], Verbs:["get" "list" "watch"]}
+```
+
+Either failure fails the **whole WorkshopSession**, not just the one object, so
+the attendee gets no session at all.
+
+This chart therefore ships a ClusterRole labelled
+`rbac.educates.dev/extends-workshop-permissions: "true"`, which Educates
+aggregates into its session-manager — the same extension point kapp-controller
+and vcluster use. The grant is scoped to this operator's own kind; session-manager
+gets no say over platforms, catalogs, or the Secrets the operator mints.
+
+It is on by default and inert on a cluster with no Educates, where nothing
+aggregates the label. To opt out:
+
+```console
+--set educates.extendSessionManagerPermissions=false
+```
+
+Only turn it off if no workshop on the cluster uses this operator.
+
 ## Installing
 
 ```console

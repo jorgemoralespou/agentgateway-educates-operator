@@ -1,0 +1,70 @@
+{{- if .Values.educates.extendSessionManagerPermissions }}
+{{- /*
+Lets Educates' session-manager manage AgentGatewaySessions on a workshop's
+behalf. Without this, no workshop that uses this operator can start at all.
+
+session-manager creates every object in a workshop's `session.objects`, and it
+holds no permissions on this operator's API group by default. That breaks a
+workshop twice over.
+
+First, it cannot create the AgentGatewaySession itself:
+
+  agentgatewaysessions.agentgateway.operators.educates.dev is forbidden:
+  User "system:serviceaccount:educates:session-manager" cannot create resource
+  "agentgatewaysessions" in API group "agentgateway.operators.educates.dev"
+
+Second, Kubernetes forbids privilege escalation through RBAC: to create a Role
+granting a permission, the creator must already hold that permission (or hold
+the `escalate` verb). So a workshop that also asks for a Role over
+agentgatewaysessions — letting an attendee read their own budget — is rejected
+even once creation works:
+
+  roles.rbac.authorization.k8s.io "...-agentgateway-reader" is forbidden:
+  user "system:serviceaccount:educates:session-manager" is attempting to grant
+  RBAC permissions not currently held:
+  {APIGroups:["agentgateway.operators.educates.dev"],
+   Resources:["agentgatewaysessions"], Verbs:["get" "list" "watch"]}
+
+The whole WorkshopSession then fails — not just the Role — so an attendee gets
+no session at all.
+
+Educates' own extension point for this is ClusterRole aggregation: the
+`educates-session-manager` ClusterRole aggregates everything labelled
+`rbac.educates.dev/extends-workshop-permissions: "true"`, which is how
+kapp-controller and vcluster add their own kinds. The grant is scoped to this
+operator's own kind and nothing else — session-manager gets no say over
+platforms, catalogs, or the Secrets the operator mints.
+
+Off automatically on a cluster with no Educates, since the aggregation label
+means nothing there — see the values file.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: educates-session-manager:agentgateway
+  labels:
+    {{- include "agentgateway-educates-operator.labels" . | nindent 4 }}
+    rbac.educates.dev/extends-workshop-permissions: "true"
+rules:
+  - apiGroups:
+      - agentgateway.operators.educates.dev
+    resources:
+      - agentgatewaysessions
+    verbs:
+      # The full lifecycle, not just reads. session-manager creates the
+      # AgentGatewaySession named in a workshop's session.objects when an
+      # attendee starts, and deletes it when the session ends — so `create` and
+      # `delete` are what make the workshop work at all. The read verbs are
+      # what let it grant an attendee a Role over their own session, which
+      # Kubernetes only permits to a grantor that already holds them.
+      #
+      # This matches what Educates' own extension roles take for the kinds they
+      # add (see educates-session-manager:vcluster).
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+{{- end }}
