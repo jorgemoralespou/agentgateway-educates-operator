@@ -12,7 +12,7 @@ through it.
 echo "${OPENAI_API_KEY:0:6}..."
 ```
 
-Your key — printed truncated, because it is a real credential. It is yours
+Your key, printed truncated, because it is a real credential. It is yours
 alone: nobody else in this workshop has it, and it will stop working when your
 session ends.
 
@@ -27,8 +27,8 @@ curl -sS "$OPENAI_BASE_URL/v1/chat/completions" \
   -d '{"model": "fast", "messages": [{"role": "user", "content": "Say hello in exactly five words."}]}'
 ```
 
-A JSON completion comes back. Two names are available here — `fast` and
-`smart` — and which upstream model each resolves to is the cluster operator's
+A JSON completion comes back. Two names are available here, `fast` and
+`smart`, and which upstream model each resolves to is the cluster operator's
 decision, not yours. Try the other one:
 
 ```execute

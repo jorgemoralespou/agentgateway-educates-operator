@@ -111,8 +111,8 @@ func TestHashDistinguishesKeys(t *testing.T) {
 	}
 }
 
-// The hash must not contain the key, or the registration ConfigMap — which is
-// not confidential — would leak the credential. This is what makes the
+// The hash must not contain the key, or the registration ConfigMap, which is
+// not confidential, would leak the credential. This is what makes the
 // ADR-0002 leak tolerable.
 func TestHashDoesNotContainTheKey(t *testing.T) {
 	key, err := Generate()

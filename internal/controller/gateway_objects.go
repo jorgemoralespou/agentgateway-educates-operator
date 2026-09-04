@@ -19,9 +19,9 @@ import (
 // Gateway API and agentgateway resources are handled as unstructured objects
 // rather than typed ones.
 //
-// Their CRDs may not exist when the operator starts — the Gateway API ones
+// Their CRDs may not exist when the operator starts: the Gateway API ones
 // arrive with this operator's Helm chart (ADR-0006) and agentgateway's arrive
-// from the charts the platform installs — and a typed client caches a REST
+// from the charts the platform installs, and a typed client caches a REST
 // mapping at startup, so every typed call to a kind whose CRD appeared later
 // fails until the pod restarts. Unstructured access with an explicit GVK
 // sidesteps that entirely.
@@ -77,7 +77,7 @@ func newModel() *unstructured.Unstructured {
 }
 
 // newModelList is newModel for a List call. Models are the one kind here with
-// no fixed name — a catalog names them — so both the catalog's prune and the
+// no fixed name, a catalog names them, so both the catalog's prune and the
 // platform's teardown have to find them by label rather than construct them.
 func newModelList() *unstructured.UnstructuredList {
 	l := &unstructured.UnstructuredList{}
@@ -117,7 +117,7 @@ func unstructuredConditionTrue(u *unstructured.Unstructured, condType string) bo
 // agentgateway's own default is LoadBalancer, which never gets an address on a
 // cluster with no load-balancer provider. Sessions reach the gateway over
 // in-cluster DNS and nothing external ever connects to it, so this is not a
-// user-facing field — a knob whose default is correct everywhere is surface
+// user-facing field: a knob whose default is correct everywhere is surface
 // without a decision behind it (ADR-0005).
 //
 // The overlay is a strategic-merge patch on the generated ServiceSpec. Creating
@@ -169,7 +169,7 @@ func (r *AgentGatewayPlatformReconciler) ensureGateway(ctx context.Context, plat
 		// pass: doing so would fight anyone who attached an extra listener, and
 		// nothing in this operator's own configuration changes it. Two fields
 		// are exceptions, both because a Gateway created by an earlier build is
-		// broken without them — see ensureListenerRouteKinds and
+		// broken without them, see ensureListenerRouteKinds and
 		// ensureGatewayParametersRef.
 		if err := r.ensureListenerRouteKinds(ctx, live); err != nil {
 			return err
@@ -228,7 +228,7 @@ func (r *AgentGatewayPlatformReconciler) ensureGateway(ctx context.Context, plat
 //
 // AgentgatewayModel is strictly opt-in: agentgateway's default kinds for an
 // HTTP listener are HTTPRoute and GRPCRoute, and a model attaching to a
-// listener that does not name its kind is ignored in silence — no status on the
+// listener that does not name its kind is ignored in silence: no status on the
 // model, no event, and the listener still reports Accepted and Programmed while
 // attachedRoutes stays 0. Every request then 404s with "route not found" even
 // though every resource looks healthy. Naming the kind is what enables the
@@ -301,8 +301,8 @@ func (r *AgentGatewayPlatformReconciler) ensureListenerRouteKinds(ctx context.Co
 // ClusterIP.
 //
 // The ref goes on the Gateway rather than the GatewayClass because the
-// GatewayClass is agentgateway's own object — its controller creates it after
-// leader election (ADR-0005) — and writing a field into a resource another
+// GatewayClass is agentgateway's own object: its controller creates it after
+// leader election (ADR-0005), and writing a field into a resource another
 // controller owns invites a write loop where each side reasserts its version.
 // The Gateway is this operator's, so nothing contends for it. agentgateway
 // applies GatewayClass overlays first and Gateway overlays second, so the
@@ -334,7 +334,7 @@ func (r *AgentGatewayPlatformReconciler) ensureGatewayParametersRef(ctx context.
 // pruneLegacyGateway removes the Gateway an earlier build created under the
 // name the control-plane Helm release also uses.
 //
-// That Gateway can never become Programmed — see LegacyGatewayName — and
+// That Gateway can never become Programmed, see LegacyGatewayName, and
 // renaming a Kubernetes object means creating a new one, so the wedged original
 // would otherwise stay behind logging a rejected apply forever. Deleting it
 // takes its data-plane Deployment and Service with it and leaves the
@@ -375,8 +375,8 @@ func (r *AgentGatewayPlatformReconciler) pruneLegacyGateway(ctx context.Context,
 // miss both when the CRDs are genuinely absent and when they were installed
 // after this mapper last looked. Those are indistinguishable from the error
 // alone, so a miss resets the mapper and asks once more. Without that, the
-// `gatewayAPI.install: false` path — where a cluster operator installs Gateway
-// API themselves after this operator is already running — would sit in
+// `gatewayAPI.install: false` path, where a cluster operator installs Gateway
+// API themselves after this operator is already running, would sit in
 // Installing until someone restarted the pod.
 func (r *AgentGatewayPlatformReconciler) gatewayAPIPresent(_ context.Context) (bool, error) {
 	gk := schema.GroupKind{Group: GatewayAPIGroup, Kind: KindGateway}
@@ -409,8 +409,8 @@ func (r *AgentGatewayPlatformReconciler) gatewayAPIPresent(_ context.Context) (b
 //
 // Both cases are normal during teardown: EducatesClusterConfig's own teardown
 // guard hardcodes the three platform component kinds and will not wait for this
-// operator's resources, so cluster services — and the CRDs defining these
-// kinds — can be removed while this operator is still draining (ADR-0005).
+// operator's resources, so cluster services, and the CRDs defining these
+// kinds, can be removed while this operator is still draining (ADR-0005).
 func (r *AgentGatewayPlatformReconciler) deleteIfPresent(ctx context.Context, obj client.Object) error {
 	if err := r.Delete(ctx, obj); err != nil {
 		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) || apierrors.IsMethodNotSupported(err) {

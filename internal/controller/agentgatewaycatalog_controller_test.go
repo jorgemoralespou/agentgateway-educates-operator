@@ -287,7 +287,7 @@ var _ = Describe("AgentGatewayCatalog reconciler", func() {
 		// Rendering alone is not convergence. A model dropped from the catalog
 		// used to keep its rendered pair, still parented to the Gateway and
 		// still Public, so an attendee could go on addressing a name the
-		// catalog no longer lists — and go on spending against the credential
+		// catalog no longer lists, and go on spending against the credential
 		// behind it.
 		It("deletes the rendered pair, so a withdrawn model stops being addressable", func() {
 			second := defaultCatalogModel()

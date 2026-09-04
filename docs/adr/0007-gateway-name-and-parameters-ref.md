@@ -29,7 +29,7 @@ The two are not interchangeable. The control plane runs
 `cr.agentgateway.dev/controller` and carries the selector Helm gave it; the data
 plane wants a selector containing `gateway.networking.k8s.io/gateway-name`. A
 Deployment's `spec.selector` is immutable, so the apply is rejected by the API
-server — not once, but on every retry:
+server, not once, but on every retry:
 
 ```
 failed to apply object apps/v1, Kind=Deployment agentgateway-system/agentgateway:
@@ -55,7 +55,7 @@ load-balancer provider.
 
 The object was created correctly. Nothing referenced it. `ensureGatewayParametersRef`
 was a no-op whose comment asserted the overlay was "attached at the GatewayClass
-level" — but `parametersRef` appeared nowhere in the codebase, and the
+level", but `parametersRef` appeared nowhere in the codebase, and the
 GatewayClass on a live cluster had no `spec.parametersRef`. The data-plane
 Service was `LoadBalancer` with `EXTERNAL-IP: <pending>`, exactly the state the
 overlay existed to prevent.
@@ -75,7 +75,7 @@ data plane.
 **Attach `parametersRef` to the Gateway**, at
 `spec.infrastructure.parametersRef`, rather than to the GatewayClass.
 
-The GatewayClass is agentgateway's own object — its controller creates it after
+The GatewayClass is agentgateway's own object: its controller creates it after
 leader election, and this operator only waits for it (ADR-0005). Writing a field
 into a resource another controller owns invites a write loop in which each side
 reasserts its version. The Gateway is this operator's own, so nothing contends
@@ -97,7 +97,7 @@ step: the wedged Gateway is removed, the correctly-named one is created, and its
 data-plane Service comes up as `ClusterIP`.
 
 `GatewayURL` in `AgentGatewayPlatform` status changes value. Nothing persists it
-across restarts and sessions re-read it, so no migration is needed — but a
+across restarts and sessions re-read it, so no migration is needed, but a
 workshop that hardcoded the old URL rather than reading it from the session
 Secret would break, correctly, having been pointed at the control plane.
 
@@ -108,8 +108,8 @@ be retired.
 
 Both defects shared a shape: the operator created an object and assumed the
 effect. The tests asserted on the objects, so they passed. The tests added here
-assert on the *link* — that the Gateway references the overlay, and that
-`GatewayName` differs from the release names — because that is where both bugs
+assert on the *link*: that the Gateway references the overlay, and that
+`GatewayName` differs from the release names: because that is where both bugs
 actually lived.
 
 ## Notes

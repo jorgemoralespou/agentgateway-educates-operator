@@ -326,7 +326,7 @@ var _ = Describe("AgentGatewayPlatform teardown and provider switching", func() 
 			Expect(k8sClient.Create(ctx, platform)).To(Succeed())
 
 			// It should be waiting on the referenced Gateway, which does not
-			// exist — and must never have installed anything of its own.
+			// exist, and must never have installed anything of its own.
 			Eventually(func() metav1.ConditionStatus {
 				return conditionStatus(agentgatewayv1alpha1.ConditionControlPlaneReady)
 			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
@@ -361,7 +361,7 @@ var _ = Describe("AgentGatewayPlatform teardown and provider switching", func() 
 	Describe("tolerating a partially dismantled cluster", func() {
 		// The Educates installer's teardown guard hardcodes the three platform
 		// component kinds and will not wait for this operator's resources, so
-		// cluster services — and the CRDs behind these kinds — can be removed
+		// cluster services, and the CRDs behind these kinds, can be removed
 		// while this operator is still draining.
 		It("completes teardown when the objects it would delete are already gone", func() {
 			createPlatformIn(namespace)

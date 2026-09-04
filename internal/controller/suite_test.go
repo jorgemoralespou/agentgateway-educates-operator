@@ -25,7 +25,7 @@ import (
 // resource against a real API server and asserts on the objects that result:
 // which exist, in which namespace, owned by what, containing what shape of
 // data, and what the status says. That is what an attendee or a cluster
-// operator could observe, and it is where the interesting failures live —
+// operator could observe, and it is where the interesting failures live,
 // placement, ownership, deletion ordering, idempotency.
 //
 // Tests here deliberately do not assert how the reconciler is structured or how
@@ -58,7 +58,7 @@ var _ = BeforeSuite(func() {
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths: []string{
 			// The chart's crds/ is the canonical location for this operator's
-			// own CRDs — there is no config/ kustomize tree.
+			// own CRDs: there is no config/ kustomize tree.
 			filepath.Join("..", "..", "charts", "agentgateway-educates-operator", "crds"),
 			// Third-party kinds the reconcilers create. In production this
 			// operator installs these; a test cannot wait for that.

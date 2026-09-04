@@ -15,15 +15,15 @@ All kinds: group `agentgateway.dev`, version `v1alpha1`, scope **Namespaced**.
 
 ## Corrections to design.md
 
-1. Provider enum is `OpenAI` / `Anthropic` — **not** the design doc's `openAI` /
+1. Provider enum is `OpenAI` / `Anthropic`, **not** the design doc's `openAI` /
    `anthropic`. Wrong casing is rejected by CRD validation.
 2. The alias mechanism is `spec.virtualModel`; `spec.visibility: Internal` is
    what hides the concrete model. A model is *either* concrete (`provider`) or
-   virtual (`virtualModel`) — never both.
+   virtual (`virtualModel`), never both.
 3. Credentials must sit on the **concrete** model. CEL forbids `policies` on a
    virtual model, so the alias cannot carry auth.
 4. `unit: Tokens` is on the **descriptor**, not the entry, and is a *cost* unit.
-   `rateLimit.local[].unit` is a *time* unit — same name, different field.
+   `rateLimit.local[].unit` is a *time* unit, same name, different field.
 5. `failureMode` has **no schema default**. Omitting it leaves it absent and only
    the data plane applies FailClosed. Always write it explicitly.
 
@@ -31,7 +31,7 @@ All kinds: group `agentgateway.dev`, version `v1alpha1`, scope **Namespaced**.
 
 `spec`: `backend`, `frontend`, `strategy`, `targetRefs`, `targetSelectors`, `traffic`.
 
-### spec.targetRefs[] — no namespace field
+### spec.targetRefs[]: no namespace field
 
 `group` (req), `kind` (req), `name` (req), `sectionName?`, `port?`.
 `minItems: 1`, `maxItems: 16`. The target must be in the policy's own namespace.
@@ -119,7 +119,7 @@ spec.parentRefs[]    Gateway API ParentReference; group default
                      gateway.networking.k8s.io, kind default Gateway
 ```
 
-`spec.virtualModel` — exactly one of `[weighted failover conditional]`:
+`spec.virtualModel`, exactly one of `[weighted failover conditional]`:
 
 ```
 weighted.targets[]     modelRef{name} (req, no namespace), model?, weight (default 1)
@@ -132,7 +132,7 @@ conditional.targets[]  modelRef{name}, model?, when (CEL; omit only on the last)
 One catalog entry becomes two objects:
 
 ```yaml
-# concrete, hidden — carries the credential
+# concrete, hidden, carries the credential
 spec:
   provider: OpenAI
   visibility: Internal
@@ -141,7 +141,7 @@ spec:
     auth:
       secretRef: { name: openai-credentials, key: api-key }
 ---
-# alias — what attendees address
+# alias, what attendees address
 spec:
   visibility: Public
   match: { model: fast }               # catalog name, exact
@@ -150,7 +150,7 @@ spec:
       targets:
         - modelRef: { name: <concrete model> }
           weight: 1
-  # no policies block — CEL rejects it
+  # no policies block, CEL rejects it
 ```
 
 ## AgentgatewayParameters
@@ -172,7 +172,7 @@ the Gateway level.
 
 ## AgentgatewayBackend
 
-Not needed for the model-based flow — credentials for an `AgentgatewayModel`
+Not needed for the model-based flow, credentials for an `AgentgatewayModel`
 live on the model. `AgentgatewayBackend` serves the older
 `spec.ai.groups[].providers[]` style.
 

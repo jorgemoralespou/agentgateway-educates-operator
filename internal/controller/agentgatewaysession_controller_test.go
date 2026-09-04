@@ -36,7 +36,7 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 
 		// The session reconciler gates on a ready platform and catalog, so both
 		// are faked into a ready state rather than driven through a real
-		// install — that path is covered by the platform specs.
+		// install: that path is covered by the platform specs.
 		createReadyPlatform()
 		createReadyCatalog()
 
@@ -184,7 +184,7 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 			Expect(secret.OwnerReferences[0].UID).To(Equal(sessionNS.UID))
 
 			// The registration is in a namespace that outlives every session,
-			// so nothing owns it — which is precisely why it needs a finalizer.
+			// so nothing owns it, which is precisely why it needs a finalizer.
 			cm := &corev1.ConfigMap{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Namespace: testGatewayNamespace, Name: "ws-003-agentgateway",
@@ -247,7 +247,7 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 
 	Describe("self-healing", func() {
 		// The plaintext is unrecoverable once written, so a lost Secret cannot
-		// be restored — a new key is generated and the registration updated,
+		// be restored: a new key is generated and the registration updated,
 		// which makes rotation the recovery path (ADR-0004).
 		It("repairs a deleted Secret by generating a new key and updating the registration", func() {
 			session := createSession("ws-005")

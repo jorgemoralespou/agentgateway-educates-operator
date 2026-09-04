@@ -39,7 +39,7 @@ spec:
     objects:
       # Attendees inspect their own grant and Secret on pages 2 and 4. The
       # default session role covers only the core, apps, batch and networking
-      # groups, so reading a custom resource needs an explicit grant — without
+      # groups, so reading a custom resource needs an explicit grant, without
       # this, every kubectl command in the content fails with a forbidden error.
       #
       # Both objects go in the workshop namespace because that is where the

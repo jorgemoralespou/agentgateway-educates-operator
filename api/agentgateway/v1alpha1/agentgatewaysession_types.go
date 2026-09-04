@@ -188,7 +188,7 @@ const DefaultTTL = "4h"
 //
 // Defaulted here as well as in the CRD because a grant created before the
 // default existed, or through a client that strips zero values, would otherwise
-// register a budget of zero — which the gateway would read as "no tokens at
+// register a budget of zero, which the gateway would read as "no tokens at
 // all" and reject every request the attendee makes.
 func (s *AgentGatewaySession) TokenBudget() int64 {
 	if s.Spec.TokenBudget > 0 {

@@ -49,6 +49,6 @@ educates:
   #
   # Defaults on: the grant is scoped to this operator's own kind, and it is
   # inert on a cluster with no Educates, where nothing aggregates the label. Set
-  # false to keep the operator from creating cluster-scoped RBAC at all — then
+  # false to keep the operator from creating cluster-scoped RBAC at all, then
   # only `provider: ExternalAgentgateway` with hand-managed sessions works.
   extendSessionManagerPermissions: true

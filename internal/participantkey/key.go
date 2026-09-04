@@ -1,7 +1,7 @@
 // Package participantkey generates and hashes the credential an attendee's
 // workshop code uses to reach the Gateway.
 //
-// In agentgateway's Kubernetes mode there is no minting API — nothing upstream
+// In agentgateway's Kubernetes mode there is no minting API, nothing upstream
 // issues a credential, so whatever appears in a key registration is whatever
 // the author of that object put there. This operator generates the key itself
 // (ADR-0004), which is a real departure from the LiteLLM prior art where the

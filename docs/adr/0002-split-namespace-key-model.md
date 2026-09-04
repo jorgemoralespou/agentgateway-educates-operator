@@ -25,8 +25,8 @@ selector is pinned to the policy's own namespace in compiled code:
 
     krt.FilterIndex(ctx.Collections.ConfigMapsByNamespace, policy.Namespace)
 
-There is no `namespaceSelector` field, and `ReferenceGrant` — which agentgateway
-supports for backend references — is never consulted in the API-key path.
+There is no `namespaceSelector` field, and `ReferenceGrant`, which agentgateway
+supports for backend references, is never consulted in the API-key path.
 
 Two workarounds were considered and rejected on evidence:
 
@@ -43,7 +43,7 @@ the session-start critical path, where latency directly delays every attendee's
 container start.
 
 Educates owns session objects by the session *namespace*, not the WorkshopSession
-CR (`kopf.adopt(object_body, namespace_instance.obj)`, `:1283` — the published
+CR (`kopf.adopt(object_body, namespace_instance.obj)`, `:1283`: the published
 docs say otherwise and are stale). So the Secret is inside the blast radius of
 session teardown; the registration, in a namespace that outlives every session,
 is not.
@@ -62,7 +62,7 @@ at all.
 Session teardown removes both objects in the normal case.
 
 A finalizer that cannot complete blocks the entire session namespace in
-`Terminating`. Educates makes this deliberately visible — that is why the
+`Terminating`. Educates makes this deliberately visible: that is why the
 namespace owns session objects. Bounding the finalizer trades a rare leaked
 registration for never wedging a cluster, which is the right way round: leaked
 registrations are recoverable by an out-of-band sweep, wedged namespaces need
@@ -71,8 +71,8 @@ operator intervention per session.
 When cleanup does fail, what leaks is a SHA-256 hash, not a credential. The
 plaintext died with the workshop namespace. An orphaned registration is a stale
 record that opens nothing for anyone not already holding the key, and the TTL
-closes even that window. This asymmetry — hash outlives plaintext, never the
-reverse — is what makes the whole arrangement tolerable.
+closes even that window. This asymmetry, hash outlives plaintext, never the
+reverse, is what makes the whole arrangement tolerable.
 
 Force-deleting a namespace (`--grace-period=0`) strips finalizers and orphans the
 registration outright. The TTL is the only protection in that case, which is why
@@ -81,5 +81,5 @@ it is not optional.
 ## Notes
 
 The workshop-namespace behaviour is read from source, not observed end-to-end. It
-must be validated against a live Educates v4 cluster — covering teardown as well
-as startup — before this design is built on.
+must be validated against a live Educates v4 cluster, covering teardown as well
+as startup, before this design is built on.

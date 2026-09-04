@@ -44,7 +44,7 @@ const (
 	//
 	// A cluster that ran an earlier build still has this Gateway, wedged at
 	// Programmed=False by the collision described above, and it does not heal
-	// on its own — the rename leaves it behind rather than renaming it in
+	// on its own: the rename leaves it behind rather than renaming it in
 	// place. See pruneLegacyGateway, which only ever deletes one carrying this
 	// operator's own managed-by label.
 	LegacyGatewayName = "agentgateway"
@@ -94,7 +94,7 @@ const (
 
 	// KindHTTPRoute is named only in the listener's allowedRoutes, to preserve
 	// a default that setting allowedRoutes.kinds would otherwise revoke. This
-	// operator creates no HTTPRoute — models attach to the listener directly.
+	// operator creates no HTTPRoute, models attach to the listener directly.
 	KindHTTPRoute = "HTTPRoute"
 )
 

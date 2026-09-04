@@ -67,7 +67,7 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 
 	// Placement is checked before anything is created. A grant in a session
 	// namespace produces a Secret the attendee's pod cannot resolve, and the pod
-	// then wedges in CreateContainerConfigError with no useful diagnostic — so
+	// then wedges in CreateContainerConfigError with no useful diagnostic, so
 	// it is rejected with an explanatory condition rather than reconciled
 	// (ADR-0002).
 	if ok, reason := r.placementValid(ctx, session); !ok {
@@ -91,7 +91,7 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 		agentgatewayv1alpha1.ReasonReady,
 		"the grant is in a workshop namespace, so the Secret is reachable by the attendee's pod")
 
-	// Resolve the catalog, which is also how the gateway address is learned —
+	// Resolve the catalog, which is also how the gateway address is learned,
 	// read from the platform's status, never reconstructed.
 	gatewayURL, gatewayNamespace, ready, err := r.resolveCatalog(ctx, session)
 	if err != nil {
@@ -115,7 +115,7 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 
 	// The key is read from the Secret when it exists, and generated only when
 	// it does not. Generating on every pass would rotate a live attendee out of
-	// their session mid-workshop — the create-only defect inherited from the
+	// their session mid-workshop: the create-only defect inherited from the
 	// prior art, in reverse.
 	key, generated, err := r.ensureSecret(ctx, session, gatewayURL)
 	if err != nil {
@@ -142,7 +142,7 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 	// expiry an operator reads is the one the gateway actually enforces.
 	expiresAt := r.expiryFor(session)
 
-	// The registration carries the hash, the budget and the expiry — never key
+	// The registration carries the hash, the budget and the expiry, never key
 	// material. A lost Secret is repaired by generating a new key and updating
 	// the registration, which makes rotation the recovery path (ADR-0004).
 	if err := r.ensureRegistration(ctx, session, gatewayNamespace, key, expiresAt); err != nil {
@@ -196,7 +196,7 @@ func (r *AgentGatewaySessionReconciler) placementValid(ctx context.Context, sess
 		if owner.Kind == "WorkshopSession" {
 			return false, fmt.Sprintf(
 				"this grant is in the session namespace %q, where the Secret it creates would be "+
-					"unreachable by the attendee's pod — the pod runs in the workshop namespace and "+
+					"unreachable by the attendee's pod: the pod runs in the workshop namespace and "+
 					"can only resolve a secretKeyRef there. Set `namespace: $(workshop_namespace)` on "+
 					"the AgentGatewaySession in session.objects.",
 				session.Namespace)
@@ -349,7 +349,7 @@ func (r *AgentGatewaySessionReconciler) setSessionNamespaceOwner(ctx context.Con
 	ns := &corev1.Namespace{}
 	if err := r.Get(ctx, types.NamespacedName{Name: sessionNS}, ns); err != nil {
 		if apierrors.IsNotFound(err) {
-			// No session namespace to own it — which is the case in a manual
+			// No session namespace to own it, which is the case in a manual
 			// test, or when a grant is created outside Educates. The Secret is
 			// then collected with the workshop namespace instead, which is
 			// still bounded.
@@ -414,7 +414,7 @@ func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, 
 
 	// Deliberately no owner reference. The registration lives in a namespace
 	// that outlives every session, so it is outside the blast radius of session
-	// teardown — which is why it needs a finalizer (ADR-0002).
+	// teardown, which is why it needs a finalizer (ADR-0002).
 
 	live := &corev1.ConfigMap{}
 	getErr := r.Get(ctx, types.NamespacedName{Namespace: gatewayNamespace, Name: name}, live)
@@ -486,7 +486,7 @@ func (r *AgentGatewaySessionReconciler) SetupWithManager(mgr ctrl.Manager) error
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// Secrets are watched by label rather than with Owns(), because the
 		// Secret is deliberately owned by the session *namespace* and not by
-		// this resource — Owns() would match nothing, and a deleted Secret
+		// this resource, Owns() would match nothing, and a deleted Secret
 		// would never be repaired.
 		Watches(&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(mapSecretToSession)).

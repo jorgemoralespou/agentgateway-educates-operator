@@ -5,7 +5,7 @@ package helm
 //
 // The real Helm client needs a cluster it can apply manifests to. envtest is an
 // API server with no controllers and no kubelet, so a chart's Deployment would
-// be accepted and then never do anything — Helm's own apply would still work,
+// be accepted and then never do anything, Helm's own apply would still work,
 // but slowly and pointlessly. An in-memory release store keeps the converge
 // logic under test while leaving the cluster out of it.
 
@@ -59,7 +59,7 @@ func NewMemoryClient(namespace string) (*Client, error) {
 		cfg:       cfg,
 		namespace: namespace,
 		// The fake kube client cannot apply CRDs, and no test needs them
-		// applied — the CRDs envtest serves come from the chart directory.
+		// applied: the CRDs envtest serves come from the chart directory.
 		skipCRDs: true,
 	}, nil
 }

@@ -17,7 +17,7 @@ import (
 // Key expiry.
 //
 // Every participant key carries a TTL as a backstop, because force-deleting a
-// namespace strips finalizers and orphans the registration outright — no
+// namespace strips finalizers and orphans the registration outright, no
 // teardown path this operator controls runs at all in that case (ADR-0002).
 //
 // The natural home for this would be the gateway: stamp an expiry on the

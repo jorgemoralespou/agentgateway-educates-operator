@@ -13,7 +13,7 @@ critically, different mechanisms for issuing API keys.
 
 **Standalone** is a single process configured by a YAML file. Keys are managed
 through an admin REST API at port 15000. That API requires
-`config.storage.mode: hybrid` plus a `config.database.url` — so a database, and
+`config.storage.mode: hybrid` plus a `config.database.url`, so a database, and
 therefore either SQLite on a volume or a Postgres. The admin port is
 **unauthenticated**; the docs are explicit that it must stay bound to localhost.
 Key propagation is asynchronous, so a caller must retry on 401 immediately after
@@ -21,7 +21,7 @@ creating a key.
 
 **Kubernetes mode** is driven by Gateway API plus agentgateway's own CRDs. Keys
 are plain ConfigMaps or Secrets, selected by label. No database, no admin port,
-no propagation race — a Kubernetes informer watches the objects and pushes a new
+no propagation race: a Kubernetes informer watches the objects and pushes a new
 xDS snapshot on change.
 
 Educates workshop clusters are ephemeral and the platform's stated preference is
@@ -54,7 +54,7 @@ The cost is a hard dependency on agentgateway's Kubernetes mode and its CRDs
 implementation. Standalone mode's simpler single-pod deployment is given up.
 
 Reversing this means rewriting the operator as an HTTP client and introducing a
-database — effectively a different operator. Hence an ADR.
+database, effectively a different operator. Hence an ADR.
 
 ## Notes
 

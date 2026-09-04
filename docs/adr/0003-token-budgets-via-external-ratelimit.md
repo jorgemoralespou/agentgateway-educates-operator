@@ -16,7 +16,7 @@ Blast-radius control is the target.
 
 agentgateway offers three mechanisms:
 
-**Per-key budgets** are the best fit conceptually — USD or token ceilings,
+**Per-key budgets** are the best fit conceptually, USD or token ceilings,
 rolling windows, `onBudgetExceeded: Block`. But they require a database, which
 reintroduces exactly what ADR-0001 removed. They also do not exist in the
 Kubernetes-mode CRD: `budgets` and `allowedModels` appear only on the standalone
@@ -51,7 +51,7 @@ descriptors keyed on the participant key's session metadata.
 Per-attendee limits, in the unit that actually tracks cost. One attendee's
 runaway loop yields 429s for that attendee alone.
 
-Two extra Deployments — the rate-limit service and Redis. Both are installed by
+Two extra Deployments: the rate-limit service and Redis. Both are installed by
 this project's Helm chart rather than reconciled by the operator, since they are
 static infrastructure with no per-workshop variation. Redis needs **no
 persistence**: counters are ephemeral, and losing them on restart resets budgets,
@@ -60,7 +60,7 @@ persistence" constraint intact.
 
 Two behaviours to design workshop content around, both documented upstream: rate
 limiting runs *before* prompt guards, so a guardrail-rejected request still burns
-budget; and the request that crosses the limit completes — only the next one is
+budget; and the request that crosses the limit completes, only the next one is
 rejected.
 
 `failureMode` must be chosen deliberately. `FailClosed` is the default and means

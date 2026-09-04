@@ -22,8 +22,8 @@ import (
 //
 // Order is the strict reverse of install. Every step tolerates a missing object
 // and a missing kind, because the Educates installer's teardown guard does not
-// wait for this operator and can remove cluster services — and the CRDs behind
-// these kinds — first.
+// wait for this operator and can remove cluster services, and the CRDs behind
+// these kinds, first.
 func (r *AgentGatewayPlatformReconciler) reconcileDelete(ctx context.Context, platform *agentgatewayv1alpha1.AgentGatewayPlatform) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -129,7 +129,7 @@ func (r *AgentGatewayPlatformReconciler) drainConfiguration(ctx context.Context,
 
 // drainModels removes the models the catalog rendered.
 //
-// Unlike everything else here these have no fixed name — a catalog names them —
+// Unlike everything else here these have no fixed name, a catalog names them,
 // so they are found by label rather than constructed. They also carry no
 // ownerReferences, so nothing collects them on their own: without this they
 // outlive the Gateway they were parented to, and a later platform in the same

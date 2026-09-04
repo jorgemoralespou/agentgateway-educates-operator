@@ -16,7 +16,7 @@ First, it cannot create the AgentGatewaySession itself:
 Second, Kubernetes forbids privilege escalation through RBAC: to create a Role
 granting a permission, the creator must already hold that permission (or hold
 the `escalate` verb). So a workshop that also asks for a Role over
-agentgatewaysessions — letting an attendee read their own budget — is rejected
+agentgatewaysessions, letting an attendee read their own budget, is rejected
 even once creation works:
 
   roles.rbac.authorization.k8s.io "...-agentgateway-reader" is forbidden:
@@ -25,18 +25,18 @@ even once creation works:
   {APIGroups:["agentgateway.operators.educates.dev"],
    Resources:["agentgatewaysessions"], Verbs:["get" "list" "watch"]}
 
-The whole WorkshopSession then fails — not just the Role — so an attendee gets
+The whole WorkshopSession then fails, not just the Role, so an attendee gets
 no session at all.
 
 Educates' own extension point for this is ClusterRole aggregation: the
 `educates-session-manager` ClusterRole aggregates everything labelled
 `rbac.educates.dev/extends-workshop-permissions: "true"`, which is how
 kapp-controller and vcluster add their own kinds. The grant is scoped to this
-operator's own kind and nothing else — session-manager gets no say over
+operator's own kind and nothing else, session-manager gets no say over
 platforms, catalogs, or the Secrets the operator mints.
 
 Off automatically on a cluster with no Educates, since the aggregation label
-means nothing there — see the values file.
+means nothing there, see the values file.
 */}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -53,7 +53,7 @@ rules:
     verbs:
       # The full lifecycle, not just reads. session-manager creates the
       # AgentGatewaySession named in a workshop's session.objects when an
-      # attendee starts, and deletes it when the session ends — so `create` and
+      # attendee starts, and deletes it when the session ends, so `create` and
       # `delete` are what make the workshop work at all. The read verbs are
       # what let it grant an attendee a Role over their own session, which
       # Kubernetes only permits to a grantor that already holds them.

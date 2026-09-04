@@ -35,8 +35,8 @@ const tokenBudgetOverrideExpression = `has(apiKey.tokenBudget) ? ` +
 
 // ensurePolicy renders the single API-key policy.
 //
-// Exactly one policy, cluster-wide. API-key policies *replace* rather than merge
-//: two policies targeting one Gateway means one silently wins by creation
+// Exactly one policy, cluster-wide. API-key policies *replace* rather than
+// merge: two policies targeting one Gateway means one silently wins by creation
 // order, with no error surfaced, and attendees would lose access
 // non-deterministically (ADR-0002). That is why the name is a constant and
 // nothing here is per-workshop.

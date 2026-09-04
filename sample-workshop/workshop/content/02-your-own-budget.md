@@ -1,4 +1,4 @@
-Your key carries a token budget — `tokenBudget: 20000` in the grant on the last
+Your key carries a token budget, `tokenBudget: 20000` in the grant on the last
 page. It is deliberately small here so you can hit it inside a workshop
 session. A real workshop would set it to whatever its exercises need.
 
@@ -37,7 +37,7 @@ is:
 
 ## It is yours alone
 
-This is the part that matters. Your neighbour's key is unaffected — their
+This is the part that matters. Your neighbour's key is unaffected, their
 budget is separate, tracked against their own key hash.
 
 If someone next to you still has budget, ask them to run this in *their*
@@ -50,7 +50,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' "$OPENAI_BASE_URL/v1/chat/completions"
   -d '{"model": "fast", "messages": [{"role": "user", "content": "hi"}]}'
 ```
 
-They get a `200`. Same gateway, same upstream account, same model — different
+They get a `200`. Same gateway, same upstream account, same model, different
 key, different budget.
 
 Working alone? Request a second session from the training portal in another
@@ -65,7 +65,7 @@ kubectl get agentgatewaysession "$SESSION_NAME" -n "$WORKSHOP_NAMESPACE" \
   -o jsonpath='{.status.phase}{"\n"}{.status.expiresAt}{"\n"}'
 ```
 
-The budget itself is not counted down in status — the gateway tracks
+The budget itself is not counted down in status: the gateway tracks
 consumption against your key hash, and the grant only records what you were
 allotted:
 

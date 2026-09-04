@@ -1,4 +1,4 @@
-# agentgateway Educates operator — design
+# agentgateway Educates operator, design
 
 Status: design agreed, not yet built. Targets **Educates v4** (`develop`).
 
@@ -26,7 +26,7 @@ spec:
         kind: AgentGatewaySession
         metadata:
           name: $(session_name)
-          namespace: $(workshop_namespace)   # REQUIRED — see ADR-0002
+          namespace: $(workshop_namespace)   # REQUIRED, see ADR-0002
         spec:
           catalogRef: { name: default }
           tokenBudget: 100000
@@ -91,7 +91,7 @@ One per attendee, created by Educates from `session.objects`.
 spec:
   catalogRef: { name: cluster }
   tokenBudget: 100000        # tokens for the session's lifetime
-  ttl: 4h                    # backstop expiry — see ADR-0002
+  ttl: 4h                    # backstop expiry, see ADR-0002
 status:
   phase: Ready               # advisory
   conditions: [...]          # authoritative: Ready, KeyRegistered, SecretWritten
@@ -108,9 +108,9 @@ Two objects per session, in two namespaces:
 
 ```
 AgentGatewaySession (workshop ns)
-  ├─► Secret <name>-agentgateway        (workshop ns)  — plaintext key + base URL
+  ├─► Secret <name>-agentgateway        (workshop ns) , plaintext key + base URL
   │      owned by the session namespace, cascades on teardown
-  └─► ConfigMap <name>-agentgateway     (gateway ns)   — sha256 hash + metadata
+  └─► ConfigMap <name>-agentgateway     (gateway ns)  , sha256 hash + metadata
          owned by nothing; removed by finalizer (ADR-0002)
 ```
 
@@ -118,7 +118,7 @@ Ordinary pass:
 
 1. Resolve the catalog; if not Ready, set `ClusterConfigAvailable=False` and requeue.
 2. If the Secret is absent, generate a `sk-`-prefixed crypto-random key. **Only
-   then** — a key on every pass would rotate the attendee out of their session.
+   then**: a key on every pass would rotate the attendee out of their session.
 3. Write the Secret: `api-key`, `base-url`.
 4. Write the registration ConfigMap to the gateway namespace, labelled to match
    the policy selector, holding `sha256:<hex>` and `{"session": "<name>"}`.
@@ -129,7 +129,7 @@ log loudly, release, and let the namespace go. Never block indefinitely.
 
 ### Key registration shape
 
-One ConfigMap per session, not one shared map with an entry per attendee — thirty
+One ConfigMap per session, not one shared map with an entry per attendee, thirty
 attendees starting at once would otherwise contend on a single hot object, and
 duplicate keys across ConfigMaps are documented as undefined behaviour.
 
@@ -145,14 +145,14 @@ data:
     {"keyHash": "sha256:9f2b...", "metadata": {"session": "ws-123"}}
 ```
 
-The `data` key name is an arbitrary identifier — the controller iterates the map
+The `data` key name is an arbitrary identifier: the controller iterates the map
 and uses the name only in error messages. ConfigMaps reject raw keys, which is
 exactly the constraint we want.
 
 ## Rate limiting
 
 A single `AgentgatewayPolicy` in the gateway namespace, selecting every
-registration ConfigMap by label. One policy, cluster-wide — two policies on one
+registration ConfigMap by label. One policy, cluster-wide: two policies on one
 Gateway silently overwrite each other (ADR-0002).
 
 ```yaml
@@ -168,11 +168,11 @@ traffic:
       descriptors:
         - entries:
             - name: session
-              expression: 'apiKey.session'   # flattened — NOT apiKey.metadata.session
+              expression: 'apiKey.session'   # flattened, NOT apiKey.metadata.session
           unit: Tokens
 ```
 
-`backendRef` does take a namespace — the cross-namespace restriction is specific
+`backendRef` does take a namespace: the cross-namespace restriction is specific
 to the credential selector.
 
 ## Packaging
@@ -180,13 +180,13 @@ to the credential selector.
 One Helm chart, matching the v4 installer's conventions: no `config/` kustomize
 tree, `controller-gen` writes CRDs and RBAC straight into the chart. The chart
 ships agentgateway, `envoyproxy/ratelimit`, and a persistence-free Redis
-(`redis:7-alpine`, no PVC — counters reset on restart, which is fine).
+(`redis:7-alpine`, no PVC, counters reset on restart, which is fine).
 
 This operator is a **peer** of `educates-installer`, not a plugin: v4's installer
 installs a hard-coded list of embedded charts and has no third-party extension
 point.
 
-House style from `installer/operator/` — the only Go operator in the Educates
+House style from `installer/operator/`: the only Go operator in the Educates
 org, and the reference:
 
 - kubebuilder v4, multigroup layout, Go 1.26.3, controller-runtime v0.24.1
@@ -195,7 +195,7 @@ org, and the reference:
   a kopf artefact and inappropriate for a Go operator.
 - Cluster-scoped singletons named `cluster`, enforced by a CEL `XValidation` rule
 - `groupversion_info.go` hand-rolls its SchemeBuilder rather than importing
-  controller-runtime — a considered deviation from the scaffold, worth matching
+  controller-runtime: a considered deviation from the scaffold, worth matching
 - Distroless nonroot image; CI is one step, `make ci-operator`
 - Single replica, leader election enabled
 
@@ -203,7 +203,7 @@ org, and the reference:
 
 - **Cumulative per-user cost budgets.** Needs a database (ADR-0001, ADR-0003).
 - **`request.objects`.** Warranted only with reserved sessions, which are not in
-  use. Would also give `$(username)`/`$(email)` for attribution — revisit if
+  use. Would also give `$(username)`/`$(email)` for attribution, revisit if
   reserved sessions arrive.
 - **Model failover and weighted routing.** Additive later.
 - **A Gateway installer CRD.** Helm installs the Gateway; the catalog configures
@@ -216,7 +216,7 @@ session namespace behaviour is read from Educates source, not observed. It is th
 single highest-risk assumption here: if wrong, every session breaks identically.
 Test startup *and* teardown, since teardown exercises the finalizer path.
 
-Also worth an early check: `failureMode` on the rate-limit policy (ADR-0003) —
+Also worth an early check: `failureMode` on the rate-limit policy (ADR-0003),
 decide whether a rate-limit outage should stop LLM traffic or silently remove
 enforcement.
 

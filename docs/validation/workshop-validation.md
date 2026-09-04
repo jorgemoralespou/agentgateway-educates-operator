@@ -12,9 +12,9 @@ they finish.
 
 Every layer below it is. The reconcilers are covered at the envtest seam, and
 the cross-namespace garbage collection ADR-0002 rests on is covered by
-`make test-e2e` on kind. What remains is the Educates platform contract itself —
+`make test-e2e` on kind. What remains is the Educates platform contract itself,
 session Deployments landing in the workshop namespace, session objects owned by
-the session namespace — and standing up a live Educates cluster with a portal in
+the session namespace, and standing up a live Educates cluster with a portal in
 CI would cost far more than it catches.
 
 That contract was validated by hand on a live v4 cluster on 2026-09-03 and
@@ -42,7 +42,7 @@ recorded in ADR-0002. This runbook re-checks it against a real workshop.
 ## The workshop definition
 
 The whole integration surface. Note `namespace: $(workshop_namespace)` on the
-session grant — it is load-bearing and easy to omit.
+session grant: it is load-bearing and easy to omit.
 
 ```yaml
 apiVersion: training.educates.dev/v1beta1
@@ -81,7 +81,7 @@ spec:
           name: $(session_name)
           # REQUIRED. Without it the resource lands in the session namespace,
           # the Secret follows it there, and the attendee's pod cannot resolve
-          # the secretKeyRef above — it wedges in CreateContainerConfigError
+          # the secretKeyRef above: it wedges in CreateContainerConfigError
           # with no useful diagnostic (ADR-0002).
           #
           # The operator rejects a grant in a session namespace with an
@@ -109,7 +109,7 @@ echo "${OPENAI_API_KEY:0:6}..."
 # sk-...   (never print the whole key)
 ```
 
-Reach the LLM by catalog name — never by the provider's model name, which the
+Reach the LLM by catalog name, never by the provider's model name, which the
 attendee should not know:
 
 ```console
@@ -152,7 +152,7 @@ kubectl get deployment -n "$SESSION"   # expect: no resources found
 
 ### 3. A budget exhausts for one attendee only
 
-Start two sessions. In the first, burn the budget — a loop of large-context
+Start two sessions. In the first, burn the budget: a loop of large-context
 requests is quickest:
 
 ```console
@@ -195,7 +195,7 @@ kubectl get configmap "$SESSION-agentgateway" -n agentgateway-system
 # Error from server (NotFound)
 ```
 
-And the key itself is dead — reusing a copy saved from step 1 must now return
+And the key itself is dead, reusing a copy saved from step 1 must now return
 401:
 
 ```console
@@ -223,7 +223,7 @@ created. The attendee's pod should fail visibly rather than sitting in
 
 ## Recovering leaked registrations
 
-If a cleanup gave up — the operator logs loudly when it does — find and remove
+If a cleanup gave up, the operator logs loudly when it does, find and remove
 what it left:
 
 ```console

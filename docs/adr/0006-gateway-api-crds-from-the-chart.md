@@ -14,8 +14,8 @@ from agentgateway's own CRDs, which arrive with the charts of ADR-0005.
 
 The platform declaration has always offered `gatewayAPI: Managed` and
 `gatewayAPI: Existing`, documented as "this operator applies the CRDs" and "they
-are already present, leave them alone". But nothing applied them. `Managed` —
-the default — checked whether the CRDs were present, found they were not, set
+are already present, leave them alone". But nothing applied them. `Managed`,
+the default, checked whether the CRDs were present, found they were not, set
 `GatewayAPIReady=False` with a message pointing at this operator's Helm chart,
 and requeued. The chart did not install them either. On a cluster without
 Gateway API the platform never became ready, and the loop had no exit.
@@ -35,7 +35,7 @@ configuration fail on a bare cluster, which is the case a workshop cluster is
 most likely to be.
 
 **Ship them with the chart.** They are a static, versioned artefact with no
-per-cluster variation — exactly what a chart is for — and Helm applies them
+per-cluster variation, exactly what a chart is for, and Helm applies them
 before the Deployment, so the operator's mapper never sees a cluster without
 them.
 
@@ -45,7 +45,7 @@ false` could not work. A cluster whose ingress controller already owns Gateway
 API must be able to opt out, and this operator must not fight it.
 
 Version was also contested. The envtest fixtures were pinned at gateway-api
-v1.4.0 while `go.mod` required v1.6.1 — a two-minor skew, benign only because
+v1.4.0 while `go.mod` required v1.6.1: a two-minor skew, benign only because
 the operator touches nothing that changed.
 
 ## Decision
@@ -53,7 +53,7 @@ the operator touches nothing that changed.
 The chart ships the Gateway API CRDs from `templates/`, guarded by
 `{{- if .Values.gatewayAPI.install }}` and annotated
 `helm.sh/resource-policy: keep`. Only `GatewayClass` and `Gateway`, standard
-channel, at the `sigs.k8s.io/gateway-api` version in `go.mod` — currently
+channel, at the `sigs.k8s.io/gateway-api` version in `go.mod`, currently
 v1.6.1. `make vendor-gateway-api-crds` regenerates the template and the envtest
 fixtures together.
 
@@ -64,7 +64,7 @@ with `gatewayAPI.install: true` installs the CRDs and the platform proceeds.
 
 Opting out takes two settings that must agree: `gatewayAPI.install=false` on
 the chart, and `spec.gatewayAPI: Existing` on the platform. Setting only the
-first leaves `Managed` waiting for CRDs nobody installs — the same deadlock,
+first leaves `Managed` waiting for CRDs nobody installs: the same deadlock,
 now reachable only by explicit misconfiguration. The deployment guide presents
 both paths as equals rather than burying the second.
 
@@ -75,7 +75,7 @@ It matches how the chart already treats its own CRDs, which Helm's `crds/`
 never deletes either.
 
 Unlike `crds/`, templated CRDs *are* upgraded by `helm upgrade`. For a schema
-that tracks a pinned dependency this is what we want — the alternative is
+that tracks a pinned dependency this is what we want: the alternative is
 CRDs that can only ever be updated by hand.
 
 Shipping only two kinds means this chart does not provide `HTTPRoute`,
@@ -90,7 +90,7 @@ mapper and asks once more. Without that, a cluster operator who installs
 Gateway API *after* this operator is running would leave the platform in
 `Installing` until the pod restarted.
 
-The version skew is gone — the schemas the tests serve and the types the
+The version skew is gone: the schemas the tests serve and the types the
 operator compiles against are now the same release, and one Make target keeps
 them that way.
 

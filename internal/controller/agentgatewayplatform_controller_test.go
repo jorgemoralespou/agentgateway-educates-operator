@@ -138,7 +138,7 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 
 		It("creates the gateway namespace, owned by the platform so it cascades", func() {
 			// A namespace of its own, because envtest never actually removes a
-			// namespace — there is no namespace controller to finish the job —
+			// namespace, there is no namespace controller to finish the job,
 			// so one another spec created would already exist here, unowned,
 			// and the operator would rightly leave it alone.
 			namespace := "agentgateway-ownership-test"
@@ -284,7 +284,7 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 
 	Describe("the counter store's security context", func() {
 		// RunAsNonRoot on its own is not enough. The kubelet resolves it
-		// against the image's declared user, and redis:7-alpine declares none —
+		// against the image's declared user, and redis:7-alpine declares none,
 		// so it assumes root, refuses the container outright, and the pod sits
 		// at CreateContainerConfigError with "container has runAsNonRoot and
 		// image will run as root". That is a permanent config error, not a
@@ -332,7 +332,7 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 		// The rate-limit service reports Available with no counter store
 		// reachable: it retries redis in the background and answers checks
 		// meanwhile. Gating only on the service therefore let the platform
-		// report Ready while the store was in CreateContainerConfigError — the
+		// report Ready while the store was in CreateContainerConfigError, the
 		// exact state that made this bug survive to a live cluster. Token
 		// budgets are unenforceable without the store, so waiting is correct.
 		It("does not report ready while the counter store is unavailable", func() {
@@ -375,7 +375,7 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 	Describe("the LLM request path", func() {
 		// Everything below is what makes /v1/chat/completions resolve at all.
 		// Get either half wrong and every request 404s with "route not found"
-		// while the platform, catalog, Gateway and models all report healthy —
+		// while the platform, catalog, Gateway and models all report healthy,
 		// agentgateway does not report a model that failed to attach, so there
 		// is no failing condition anywhere to notice.
 
@@ -493,7 +493,7 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 		// ServiceAccount after the Gateway, verbatim, in the Gateway's own
 		// namespace. Naming the Gateway after the control-plane Helm release
 		// makes the data plane try to adopt the control plane's Deployment,
-		// whose spec.selector is immutable and different — an unrecoverable
+		// whose spec.selector is immutable and different: an unrecoverable
 		// wedge, retried forever at Programmed=False.
 		It("never matches the control-plane release name, which would collide with its Deployment", func() {
 			Expect(GatewayName).NotTo(Equal(AgentgatewayReleaseName))
@@ -539,7 +539,7 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 			foreign := newGateway()
 			foreign.SetName(LegacyGatewayName)
 			foreign.SetNamespace(testGatewayNamespace)
-			// No managed-by label: not ours.
+			// No managed-by label, not ours.
 			Expect(unstructured.SetNestedMap(foreign.Object, map[string]any{
 				"gatewayClassName": GatewayClassName,
 				"listeners": []any{
@@ -573,7 +573,7 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 		It("gates on Programmed plus the data-plane Deployment, never on the Gateway's addresses", func() {
 			createPlatform()
 
-			// driveToReady programs the Gateway with no addresses at all — the
+			// driveToReady programs the Gateway with no addresses at all, the
 			// LoadBalancer-without-a-provider case. Readiness must not depend
 			// on them.
 			driveToReady()

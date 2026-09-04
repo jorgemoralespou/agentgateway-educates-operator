@@ -35,8 +35,8 @@ Two independent causes, both defaults.
 `AGW_ENABLE_AGENTGATEWAY_MODELS` on the controller. With it off, the controller
 ignores every model.
 
-This operator's entire model story is that API — `AgentGatewayCatalog` renders
-`AgentgatewayModel` pairs and nothing else — so the default is not a
+This operator's entire model story is that API, `AgentGatewayCatalog` renders
+`AgentgatewayModel` pairs and nothing else, so the default is not a
 configuration choice for us. It is the difference between a working platform
 and one that 404s.
 
@@ -46,7 +46,7 @@ Even with the API on, a listener accepts models only if it names the kind.
 agentgateway's `GenerateSupportedKinds` gives an HTTP listener `HTTPRoute` and
 `GRPCRoute` by default and appends `AgentgatewayModel` only when the listener's
 `allowedRoutes.kinds` lists it explicitly. `allowedRoutes.namespaces.from: All`
-does not imply it — namespaces and kinds are separate axes.
+does not imply it, namespaces and kinds are separate axes.
 
 A model attaching to a listener that does not name its kind is dropped in
 silence.
@@ -60,7 +60,7 @@ build a broken cluster.
 
 **Name `AgentgatewayModel` in the listener's `allowedRoutes.kinds`**, alongside
 `HTTPRoute`. Setting `kinds` narrows a listener to exactly what is listed, so
-the `HTTPRoute` default has to be carried explicitly or it is revoked — a trap
+the `HTTPRoute` default has to be carried explicitly or it is revoked: a trap
 for whoever adds the first route later, even though this operator creates none.
 
 **Converge the listener on an existing Gateway.** The Gateway's spec is
@@ -81,7 +81,7 @@ listener gains the kind, and the control-plane release picks up the flag on the
 next Helm converge.
 
 The chart does not ship the `httproutes` CRD, and naming the kind in
-`allowedRoutes` does not require it — verified by deleting the CRD, restarting
+`allowedRoutes` does not require it, verified by deleting the CRD, restarting
 the control plane, and confirming `attachedRoutes` stayed at 2 and requests
 still routed. Listing a kind whose CRD is absent is inert.
 

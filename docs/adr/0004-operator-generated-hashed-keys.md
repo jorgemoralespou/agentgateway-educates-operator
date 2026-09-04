@@ -8,7 +8,7 @@ Accepted
 
 ## Context
 
-In agentgateway's Kubernetes mode there is no minting API — nothing upstream
+In agentgateway's Kubernetes mode there is no minting API, nothing upstream
 issues a credential. Whatever appears in a key registration is whatever the
 author of that object put there. So the operator generates the key itself.
 
@@ -20,7 +20,7 @@ operator writes. The glossary records this as **participant key** rather than
 
 agentgateway accepts either a raw `key` or a `keyHash` of the form
 `sha256:<hex>`, computed over the exact key bytes with no canonicalisation. In a
-**ConfigMap** a raw key is rejected outright — the controller errors with "keys
+**ConfigMap** a raw key is rejected outright: the controller errors with "keys
 sourced from a ConfigMap must use keyHash, not a raw key, since ConfigMaps are
 not confidential" (`plugins/traffic_plugin.go:983`).
 
@@ -32,7 +32,7 @@ per session. The plaintext goes only into the attendee's Secret. Only
 
 ## Consequences
 
-The key is known the instant it is generated — no propagation race, no
+The key is known the instant it is generated: no propagation race, no
 retry-on-401, no window where the Secret exists but the key is not yet valid.
 
 The gateway-side record holds no credential material, so the registration
@@ -40,7 +40,7 @@ ConfigMap is not a secret and is honestly typed as a ConfigMap rather than a
 Secret. This is what makes the leak in ADR-0002 tolerable.
 
 The plaintext is unrecoverable once written. If the Secret is lost, the key
-cannot be recovered — a new one is generated and the registration updated. This
+cannot be recovered: a new one is generated and the registration updated. This
 makes rotation the recovery path, and means reconcile must generate a key only
 when the Secret is genuinely absent, never on every pass.
 
@@ -49,7 +49,7 @@ issued keys, no server-side revocation independent of Kubernetes, and no
 per-key usage record beyond what the Gateway's own metrics and access logs carry.
 
 Metadata on the registration is arbitrary JSON, flattened onto the CEL `apiKey`
-object — `apiKey.session`, not `apiKey.metadata.session`
+object, `apiKey.session`, not `apiKey.metadata.session`
 (`http/apikey.rs:53-60`). The field name `key` is reserved for the redacted key
 itself and must not be used for metadata.
 

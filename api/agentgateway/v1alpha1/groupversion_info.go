@@ -23,7 +23,7 @@ var (
 	GroupVersion = SchemeGroupVersion
 
 	// SchemeBuilder collects the functions that add this group-version's
-	// types to a scheme. apimachinery-only — controller-runtime's
+	// types to a scheme. apimachinery-only, controller-runtime's
 	// pkg/scheme.Builder is deprecated precisely because api packages
 	// should not depend on controller-runtime.
 	SchemeBuilder = runtime.NewSchemeBuilder()

@@ -21,7 +21,7 @@ import (
 // envtest is an API server with no controllers: no Deployment controller, no
 // garbage collector, and nothing that would make a Gateway report Programmed.
 // Anything a real cluster's controllers would do has to be simulated here,
-// which is also what makes the resulting assertions honest — the test says
+// which is also what makes the resulting assertions honest: the test says
 // exactly which upstream signal it is standing in for.
 
 // createPlatform creates the default bundled platform declaration.
