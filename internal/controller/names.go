@@ -91,6 +91,11 @@ const (
 
 	KindGateway      = "Gateway"
 	KindGatewayClass = "GatewayClass"
+
+	// KindHTTPRoute is named only in the listener's allowedRoutes, to preserve
+	// a default that setting allowedRoutes.kinds would otherwise revoke. This
+	// operator creates no HTTPRoute — models attach to the listener directly.
+	KindHTTPRoute = "HTTPRoute"
 )
 
 // ManagedByLabel marks every object this operator creates, so a cluster

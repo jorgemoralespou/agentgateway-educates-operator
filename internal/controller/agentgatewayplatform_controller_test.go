@@ -372,6 +372,122 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 		})
 	})
 
+	Describe("the LLM request path", func() {
+		// Everything below is what makes /v1/chat/completions resolve at all.
+		// Get either half wrong and every request 404s with "route not found"
+		// while the platform, catalog, Gateway and models all report healthy —
+		// agentgateway does not report a model that failed to attach, so there
+		// is no failing condition anywhere to notice.
+
+		It("enables the AgentgatewayModel API, which the chart ships disabled", func() {
+			values := renderAgentgatewayValues(nil)
+
+			models, ok := values["agentgatewayModels"].(map[string]any)
+			Expect(ok).To(BeTrue(),
+				"the control-plane values must set agentgatewayModels")
+			Expect(models["enabled"]).To(BeTrue(),
+				"this operator renders AgentgatewayModels and nothing else, so "+
+					"the API it depends on cannot be left at the chart's default of off")
+		})
+
+		It("names AgentgatewayModel in the listener's allowedRoutes, since the kind is opt-in", func() {
+			createPlatform()
+			markDeploymentAvailable(testGatewayNamespace, AgentgatewayReleaseName)
+			createAcceptedGatewayClass()
+
+			var kinds []any
+			Eventually(func() bool {
+				gw := newGateway()
+				if err := k8sClient.Get(ctx,
+					types.NamespacedName{Namespace: testGatewayNamespace, Name: GatewayName}, gw); err != nil {
+					return false
+				}
+				listeners, found, err := unstructured.NestedSlice(gw.Object, "spec", "listeners")
+				if err != nil || !found || len(listeners) == 0 {
+					return false
+				}
+				listener, _ := listeners[0].(map[string]any)
+				allowed, _ := listener["allowedRoutes"].(map[string]any)
+				if allowed == nil {
+					return false
+				}
+				kinds, _ = allowed["kinds"].([]any)
+				return len(kinds) > 0
+			}, pollTimeout, pollInterval).Should(BeTrue(),
+				"the listener must name the route kinds it accepts")
+
+			named := map[string]string{}
+			for _, raw := range kinds {
+				kind, _ := raw.(map[string]any)
+				group, _ := kind["group"].(string)
+				name, _ := kind["kind"].(string)
+				named[name] = group
+			}
+
+			Expect(named).To(HaveKeyWithValue(KindAgentgatewayModel, AgentgatewayGroup),
+				"without this the models attach to nothing and every request 404s")
+
+			// Setting kinds at all narrows the listener to exactly what is
+			// listed, so the default this operator does not use must still be
+			// carried or it is silently revoked.
+			Expect(named).To(HaveKeyWithValue(KindHTTPRoute, GatewayAPIGroup),
+				"listing kinds revokes the defaults, so HTTPRoute must be kept")
+		})
+
+		It("adds the model kind to a Gateway created before this operator named it", func() {
+			createPlatform()
+			markDeploymentAvailable(testGatewayNamespace, AgentgatewayReleaseName)
+			createAcceptedGatewayClass()
+
+			Eventually(func() error {
+				gw := newGateway()
+				return k8sClient.Get(ctx,
+					types.NamespacedName{Namespace: testGatewayNamespace, Name: GatewayName}, gw)
+			}, pollTimeout, pollInterval).Should(Succeed())
+
+			// Rewind the listener to the pre-fix shape: namespaces only, no
+			// kinds, exactly as an earlier build wrote it.
+			gw := newGateway()
+			Expect(k8sClient.Get(ctx,
+				types.NamespacedName{Namespace: testGatewayNamespace, Name: GatewayName}, gw)).To(Succeed())
+			listeners, _, err := unstructured.NestedSlice(gw.Object, "spec", "listeners")
+			Expect(err).NotTo(HaveOccurred())
+			listener, _ := listeners[0].(map[string]any)
+			listener["allowedRoutes"] = map[string]any{
+				"namespaces": map[string]any{"from": "All"},
+			}
+			listeners[0] = listener
+			Expect(unstructured.SetNestedSlice(gw.Object, listeners, "spec", "listeners")).To(Succeed())
+			Expect(k8sClient.Update(ctx, gw)).To(Succeed())
+
+			Eventually(func() bool {
+				live := newGateway()
+				if err := k8sClient.Get(ctx,
+					types.NamespacedName{Namespace: testGatewayNamespace, Name: GatewayName}, live); err != nil {
+					return false
+				}
+				ls, found, err := unstructured.NestedSlice(live.Object, "spec", "listeners")
+				if err != nil || !found || len(ls) == 0 {
+					return false
+				}
+				l, _ := ls[0].(map[string]any)
+				allowed, _ := l["allowedRoutes"].(map[string]any)
+				if allowed == nil {
+					return false
+				}
+				ks, _ := allowed["kinds"].([]any)
+				for _, raw := range ks {
+					k, _ := raw.(map[string]any)
+					if k["kind"] == KindAgentgatewayModel {
+						return true
+					}
+				}
+				return false
+			}, pollTimeout, pollInterval).Should(BeTrue(),
+				"a Gateway from an earlier build must be converged, not left broken")
+		})
+	})
+
 	Describe("the Gateway's name", func() {
 		// agentgateway names the data-plane Deployment, Service and
 		// ServiceAccount after the Gateway, verbatim, in the Gateway's own

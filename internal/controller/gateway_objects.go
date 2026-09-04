@@ -76,6 +76,19 @@ func newModel() *unstructured.Unstructured {
 	return u
 }
 
+// newModelList is newModel for a List call. Models are the one kind here with
+// no fixed name — a catalog names them — so both the catalog's prune and the
+// platform's teardown have to find them by label rather than construct them.
+func newModelList() *unstructured.UnstructuredList {
+	l := &unstructured.UnstructuredList{}
+	l.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   AgentgatewayGroup,
+		Version: AgentgatewayVersion,
+		Kind:    KindAgentgatewayModel + "List",
+	})
+	return l
+}
+
 // unstructuredConditionTrue reads a status condition from an unstructured
 // object.
 //
@@ -154,8 +167,18 @@ func (r *AgentGatewayPlatformReconciler) ensureGateway(ctx context.Context, plat
 	if err == nil {
 		// The Gateway exists. Its spec is not rewritten wholesale on every
 		// pass: doing so would fight anyone who attached an extra listener, and
-		// nothing in this operator's own configuration changes it. The
-		// parametersRef is the exception — see ensureGatewayParametersRef.
+		// nothing in this operator's own configuration changes it. Two fields
+		// are exceptions, both because a Gateway created by an earlier build is
+		// broken without them — see ensureListenerRouteKinds and
+		// ensureGatewayParametersRef.
+		if err := r.ensureListenerRouteKinds(ctx, live); err != nil {
+			return err
+		}
+		// Re-read: ensureListenerRouteKinds may have written, which makes the
+		// copy above stale and the next Update a conflict.
+		if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: GatewayName}, live); err != nil {
+			return err
+		}
 		return r.ensureGatewayParametersRef(ctx, live)
 	}
 	if !apierrors.IsNotFound(err) {
@@ -186,6 +209,7 @@ func (r *AgentGatewayPlatformReconciler) ensureGateway(ctx context.Context, plat
 				// second change if per-workshop routes are ever added.
 				"allowedRoutes": map[string]any{
 					"namespaces": map[string]any{"from": "All"},
+					"kinds":      listenerRouteKinds(),
 				},
 			},
 		},
@@ -198,6 +222,78 @@ func (r *AgentGatewayPlatformReconciler) ensureGateway(ctx context.Context, plat
 		return fmt.Errorf("create Gateway %s/%s: %w", namespace, GatewayName, err)
 	}
 	return nil
+}
+
+// listenerRouteKinds is what the listener accepts.
+//
+// AgentgatewayModel is strictly opt-in: agentgateway's default kinds for an
+// HTTP listener are HTTPRoute and GRPCRoute, and a model attaching to a
+// listener that does not name its kind is ignored in silence — no status on the
+// model, no event, and the listener still reports Accepted and Programmed while
+// attachedRoutes stays 0. Every request then 404s with "route not found" even
+// though every resource looks healthy. Naming the kind is what enables the
+// listener's built-in LLM paths, /v1/chat/completions and /v1/models.
+//
+// HTTPRoute is listed alongside it deliberately. Setting kinds at all narrows
+// the listener to exactly what is listed, so omitting HTTPRoute would revoke
+// the default. Nothing here creates one today, but a listener that silently
+// stopped accepting them would be a trap for whoever adds the first.
+func listenerRouteKinds() []any {
+	return []any{
+		map[string]any{
+			"group": GatewayAPIGroup,
+			"kind":  KindHTTPRoute,
+		},
+		map[string]any{
+			"group": AgentgatewayGroup,
+			"kind":  KindAgentgatewayModel,
+		},
+	}
+}
+
+// ensureListenerRouteKinds adds the model kind to a Gateway that predates it.
+//
+// The Gateway's spec is otherwise left alone once created, but this one field
+// cannot be: a platform installed before this operator named the kind has a
+// listener that ignores every model it renders, and nothing about that state
+// self-corrects. Only allowedRoutes.kinds on the listener this operator owns is
+// written; an extra listener someone else attached is untouched.
+func (r *AgentGatewayPlatformReconciler) ensureListenerRouteKinds(ctx context.Context, gw *unstructured.Unstructured) error {
+	listeners, found, err := unstructured.NestedSlice(gw.Object, "spec", "listeners")
+	if err != nil || !found {
+		return err
+	}
+
+	changed := false
+	for i, raw := range listeners {
+		listener, ok := raw.(map[string]any)
+		if !ok || listener["name"] != GatewayListenerName {
+			continue
+		}
+
+		allowed, _ := listener["allowedRoutes"].(map[string]any)
+		if allowed == nil {
+			allowed = map[string]any{}
+		}
+		if equality.Semantic.DeepEqual(allowed["kinds"], listenerRouteKinds()) {
+			continue
+		}
+		allowed["kinds"] = listenerRouteKinds()
+		if allowed["namespaces"] == nil {
+			allowed["namespaces"] = map[string]any{"from": "All"}
+		}
+		listener["allowedRoutes"] = allowed
+		listeners[i] = listener
+		changed = true
+	}
+
+	if !changed {
+		return nil
+	}
+	if err := unstructured.SetNestedSlice(gw.Object, listeners, "spec", "listeners"); err != nil {
+		return err
+	}
+	return r.Update(ctx, gw)
 }
 
 // ensureGatewayParametersRef points an existing Gateway at the parameters
