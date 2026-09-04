@@ -55,6 +55,26 @@ spec:
           spec:
             description: AgentGatewayPlatformSpec declares the running gateway.
             properties:
+              adminInterface:
+                description: |-
+                  AdminInterface exposes agentgateway's unauthenticated debugging UI on the
+                  data plane. Off unless set. Applies only to a gateway this operator
+                  installed: the overlay that carries it is attached to this operator's own
+                  Gateway, and an external gateway's parameters belong to whoever runs it.
+                properties:
+                  exposed:
+                    default: false
+                    description: |-
+                      Exposed binds the admin listener to all interfaces instead of loopback and
+                      publishes port 15000 on the data-plane Service, making the UI reachable
+                      over in-cluster DNS.
+
+                      Both halves are needed. agentgateway derives the generated Service's ports
+                      from the Gateway's listeners, and the admin interface is not a listener, so
+                      a gateway serving LLM traffic on 4000 has exactly one Service port until
+                      this operator adds the second one.
+                    type: boolean
+                type: object
               bundledAgentgateway:
                 description: |-
                   BundledAgentgateway configures the gateway this operator installs. Ignored

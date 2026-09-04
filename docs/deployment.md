@@ -16,6 +16,7 @@ this guide links to it rather than repeating it.
 - [Declaring the catalog](#declaring-the-catalog)
 - [Verifying](#verifying)
 - [Using it from a workshop](#using-it-from-a-workshop)
+- [Exposing the gateway UI](#exposing-the-gateway-ui)
 - [Upgrading](#upgrading)
 - [Uninstalling](#uninstalling)
 - [Troubleshooting](#troubleshooting)
@@ -318,6 +319,80 @@ silently.
 
 A complete working example is in [`sample-workshop/`](../sample-workshop/).
 
+## Exposing the gateway UI
+
+agentgateway serves a debugging UI at `/ui` on port 15000 of the data plane,
+showing the gateway's live routes and traffic. It is off by default and turning
+it on is a deliberate decision, for the reasons below.
+
+```yaml
+apiVersion: agentgateway.operators.educates.dev/v1alpha1
+kind: AgentGatewayPlatform
+metadata:
+  name: cluster
+spec:
+  adminInterface:
+    exposed: true
+```
+
+**This interface has no authentication and never will**, which is upstream's own
+position, not a gap in this operator. agentgateway therefore binds it to
+loopback, and the operator's default leaves it there. Setting `exposed: true`
+rebinds it to all interfaces, which makes it reachable by anything that can
+route to the pod. Weigh that before enabling it on a shared cluster:
+
+- The view is **cluster-wide and shared**. Every attendee who reaches it sees
+  the same gateway, not their own session. It is a teaching aid, not isolation.
+- `POST /quitquitquit` **shuts the data plane down for every attendee at once**.
+  Anything that can reach port 15000 can call it.
+- Participant keys are not exposed. They are held as hashes in the gateway
+  namespace ([ADR-0002](adr/0002-split-namespace-key-model.md)), and in
+  Kubernetes mode the data plane takes its configuration over xDS, so the
+  local-config endpoints are empty.
+
+Setting the field does two things, and neither works without the other: it binds
+the admin listener to all interfaces, and it publishes port 15000 on the
+data-plane Service. agentgateway derives that Service's ports from the Gateway's
+listeners, and the admin interface is not a listener, so a gateway serving LLM
+traffic on 4000 has exactly one Service port until the operator adds the second
+one. Until then the port is not merely idle, it is absent.
+
+If you only need the UI yourself, prefer a port-forward and leave the field off:
+
+```console
+kubectl port-forward -n agentgateway-system svc/agentgateway-educates 15000:15000
+```
+
+### Reaching it from a workshop
+
+A dashboard tab alone is not enough. Educates loads a dashboard `url` in the
+attendee's browser, which cannot resolve a ClusterIP, so the UI has to be
+proxied through the workshop dashboard with `session.ingresses`:
+
+```yaml
+session:
+  ingresses:
+    - name: agentgateway
+      protocol: http
+      host: agentgateway-educates.agentgateway-system.svc.$(cluster_domain)
+      port: 15000
+  dashboards:
+    - name: Gateway
+      url: $(ingress_protocol)://agentgateway-$(session_name).$(ingress_domain)/ui/
+```
+
+The ingress keeps Educates' own session authentication in front of the UI, so an
+attendee who is logged into their session reaches it and nobody else does. That
+is the only access control here; it does not make the view per-attendee.
+
+Do not give this ingress a `path`. The UI is a single-page app whose base is
+pinned to `/ui/` with its API calls rooted at `/api/`, and it has no runtime base
+path, so it only works proxied at the root of its own hostname. Scoping it to a
+subpath serves the HTML and then 404s every asset.
+
+The `host` above assumes the default `bundledAgentgateway.namespace`. A platform
+installed elsewhere needs it changed to match.
+
 ## Upgrading
 
 ```console
@@ -435,6 +510,44 @@ curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' \
 A `200` after a long wait means the model is fine and the timeout is the
 limit, raise `requestTimeout` on the catalog. A failure there is a problem
 with the model or its address, not with this operator.
+
+### The gateway UI tab shows a connection error
+
+The admin interface is off, which is the default. Set
+`adminInterface.exposed: true` on the platform, see
+[Exposing the gateway UI](#exposing-the-gateway-ui).
+
+Check the Service first, since a missing port is the quicker of the two halves
+to confirm:
+
+```console
+kubectl get svc -n agentgateway-system agentgateway-educates \
+  -o jsonpath='{.spec.ports[*].port}'
+```
+
+A single `4000` means the field is off or has not reconciled. Both `4000` and
+`15000` mean the Service is right and the listener is the remaining question.
+
+Confirm which state the listener is in from the data plane's own log:
+
+```console
+kubectl logs -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=agentgateway-educates \
+  | grep 'component="admin"'
+```
+
+`address=127.0.0.1:15000` means loopback, so the field is off or has not
+reconciled yet. `address=[::]:15000` means it is exposed and the problem is
+elsewhere, most likely the ingress `host` naming the wrong namespace.
+
+If the data-plane pod is crash-looping instead, check for a hand-edited
+`AgentgatewayParameters`: agentgateway rejects `adminAddr` at the top level of
+`rawConfig` and exits, where the operator writes it under `rawConfig.config`.
+
+### The gateway UI tab renders unstyled, or its panels stay empty
+
+The ingress has a `path`. The UI is pinned to `/ui/` with its API at `/api/`, so
+proxying it under a subpath serves the HTML and 404s every asset. Remove `path`
+and `pathRewrite` and give it its own hostname.
 
 ### Leaked registrations
 

@@ -280,6 +280,40 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 			Expect(ref["name"]).To(Equal(ParametersName),
 				"the ref must name the overlay this operator created")
 		})
+
+		// The admin interface carries no authentication and its /quitquitquit
+		// endpoint stops the data plane for every session at once, so a
+		// platform that does not ask for it must not get it.
+		It("leaves the admin interface on loopback unless the platform opts in", func() {
+			createPlatform()
+			markDeploymentAvailable(testGatewayNamespace, AgentgatewayReleaseName)
+
+			Eventually(func() error {
+				params := newParameters()
+				return k8sClient.Get(ctx,
+					types.NamespacedName{Namespace: testGatewayNamespace, Name: ParametersName}, params)
+			}, pollTimeout, pollInterval).Should(Succeed())
+
+			params := newParameters()
+			Expect(k8sClient.Get(ctx,
+				types.NamespacedName{Namespace: testGatewayNamespace, Name: ParametersName}, params)).To(Succeed())
+
+			_, found, err := unstructured.NestedString(params.Object,
+				"spec", "rawConfig", "config", "adminAddr")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse(),
+				"the unauthenticated admin UI must stay loopback-only by default")
+
+			// The Service half matters as much as the binding. agentgateway
+			// derives the generated Service's ports from the Gateway's
+			// listeners and the admin interface is not one, so an unexposed
+			// platform must not publish a port that nothing answers on.
+			_, found, err = unstructured.NestedSlice(params.Object,
+				"spec", "service", "spec", "ports")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse(),
+				"no admin Service port may be published by default")
+		})
 	})
 
 	Describe("the counter store's security context", func() {

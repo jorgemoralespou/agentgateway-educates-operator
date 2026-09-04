@@ -86,6 +86,40 @@ type ExternalAgentgatewaySpec struct {
 	GatewayURL string `json:"gatewayURL,omitempty"`
 }
 
+// AdminInterfaceSpec exposes agentgateway's admin interface, which serves the
+// read-only debugging UI at /ui on port 15000 of the data plane.
+//
+// Off by default, and deliberately a cluster-operator decision rather than
+// something the operator turns on for everyone. agentgateway binds this
+// listener to loopback (127.0.0.1 and [::1]) precisely because it carries no
+// authentication and never will, upstream is explicit about that. Binding it to
+// all interfaces makes it reachable by anything that can route to the pod,
+// including every workshop session, and the surface is not read-only in the way
+// the UI suggests: /quitquitquit shuts the data plane down for every attendee
+// at once.
+//
+// What makes it defensible for a workshop is that the gateway is shared and its
+// contents are not secret. In Kubernetes mode the data plane takes its
+// configuration over xDS, so the local-config endpoints are empty and the UI
+// shows routes and live traffic rather than credentials. Participant keys are
+// held as hashes in the gateway namespace (ADR-0002) and never appear here.
+//
+// Attendees who reach the UI see one shared view of the whole cluster's
+// gateway, not their own session. That is a teaching aid, not isolation.
+type AdminInterfaceSpec struct {
+	// Exposed binds the admin listener to all interfaces instead of loopback and
+	// publishes port 15000 on the data-plane Service, making the UI reachable
+	// over in-cluster DNS.
+	//
+	// Both halves are needed. agentgateway derives the generated Service's ports
+	// from the Gateway's listeners, and the admin interface is not a listener, so
+	// a gateway serving LLM traffic on 4000 has exactly one Service port until
+	// this operator adds the second one.
+	// +kubebuilder:default=false
+	// +optional
+	Exposed bool `json:"exposed,omitempty"`
+}
+
 // RateLimitSpec configures the token-budget enforcement path.
 type RateLimitSpec struct {
 	// FailureMode decides whether a rate-limit service outage stops LLM traffic
@@ -119,6 +153,13 @@ type AgentGatewayPlatformSpec struct {
 	// Required when provider is ExternalAgentgateway.
 	// +optional
 	ExternalAgentgateway *ExternalAgentgatewaySpec `json:"externalAgentgateway,omitempty"`
+
+	// AdminInterface exposes agentgateway's unauthenticated debugging UI on the
+	// data plane. Off unless set. Applies only to a gateway this operator
+	// installed: the overlay that carries it is attached to this operator's own
+	// Gateway, and an external gateway's parameters belong to whoever runs it.
+	// +optional
+	AdminInterface *AdminInterfaceSpec `json:"adminInterface,omitempty"`
 }
 
 // PlatformPhase is an advisory summary of the install. Conditions are
