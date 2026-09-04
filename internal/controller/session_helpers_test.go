@@ -20,7 +20,7 @@ const (
 	// attendee's pod actually runs, and so where the Secret has to be.
 	workshopNamespace = "educates-test-w01"
 
-	testGatewayURL = "http://agentgateway.agentgateway-system.svc.cluster.local:4000"
+	testGatewayURL = "http://agentgateway-educates.agentgateway-system.svc.cluster.local:4000"
 )
 
 // createReadyPlatform fakes a platform that has finished installing.

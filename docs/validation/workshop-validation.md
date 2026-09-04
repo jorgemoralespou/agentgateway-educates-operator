@@ -103,7 +103,7 @@ Request a session through the portal, then in the attendee's terminal:
 
 ```console
 echo "$OPENAI_BASE_URL"
-# http://agentgateway.agentgateway-system.svc.cluster.local:4000
+# http://agentgateway-educates.agentgateway-system.svc.cluster.local:4000
 
 echo "${OPENAI_API_KEY:0:6}..."
 # sk-...   (never print the whole key)

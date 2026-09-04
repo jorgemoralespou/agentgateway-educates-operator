@@ -102,6 +102,14 @@ func (r *AgentGatewayPlatformReconciler) drainConfiguration(ctx context.Context,
 		return fmt.Errorf("delete Gateway: %w", err)
 	}
 
+	// Also the pre-rename Gateway, in case teardown is the first thing an
+	// upgraded operator does and reconcile never got the chance to prune it.
+	// Label-guarded exactly as pruneLegacyGateway is: a Gateway of that name
+	// this operator did not create is not ours to remove, on teardown either.
+	if err := r.pruneLegacyGateway(ctx, namespace); err != nil {
+		return fmt.Errorf("delete legacy Gateway: %w", err)
+	}
+
 	params := newParameters()
 	params.SetName(ParametersName)
 	params.SetNamespace(namespace)

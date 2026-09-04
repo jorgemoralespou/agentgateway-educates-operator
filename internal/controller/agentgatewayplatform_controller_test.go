@@ -249,6 +249,117 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 			Expect(found).To(BeTrue(), "the overlay must set the data-plane Service type")
 			Expect(svcType).To(Equal("ClusterIP"))
 		})
+
+		// The overlay above is inert unless something points at it. An earlier
+		// build created the AgentgatewayParameters and stopped there, so this
+		// suite went green while every real cluster still provisioned a
+		// LoadBalancer Service that sat at <pending> forever.
+		It("references the overlay from the Gateway, because an overlay nothing points at is ignored", func() {
+			createPlatform()
+			markDeploymentAvailable(testGatewayNamespace, AgentgatewayReleaseName)
+			createAcceptedGatewayClass()
+
+			var ref map[string]any
+			Eventually(func() bool {
+				gw := newGateway()
+				if err := k8sClient.Get(ctx,
+					types.NamespacedName{Namespace: testGatewayNamespace, Name: GatewayName}, gw); err != nil {
+					return false
+				}
+				var found bool
+				var err error
+				ref, found, err = unstructured.NestedMap(gw.Object,
+					"spec", "infrastructure", "parametersRef")
+				return err == nil && found
+			}, pollTimeout, pollInterval).Should(BeTrue(),
+				"the Gateway must carry spec.infrastructure.parametersRef")
+
+			Expect(ref["group"]).To(Equal(AgentgatewayGroup))
+			Expect(ref["kind"]).To(Equal(KindAgentgatewayParameters))
+			Expect(ref["name"]).To(Equal(ParametersName),
+				"the ref must name the overlay this operator created")
+		})
+	})
+
+	Describe("the Gateway's name", func() {
+		// agentgateway names the data-plane Deployment, Service and
+		// ServiceAccount after the Gateway, verbatim, in the Gateway's own
+		// namespace. Naming the Gateway after the control-plane Helm release
+		// makes the data plane try to adopt the control plane's Deployment,
+		// whose spec.selector is immutable and different — an unrecoverable
+		// wedge, retried forever at Programmed=False.
+		It("never matches the control-plane release name, which would collide with its Deployment", func() {
+			Expect(GatewayName).NotTo(Equal(AgentgatewayReleaseName))
+			Expect(GatewayName).NotTo(Equal(RateLimitReleaseName))
+			Expect(GatewayName).NotTo(Equal(AgentgatewayCRDsReleaseName))
+		})
+
+		It("removes the pre-rename Gateway, so a cluster upgraded from an older build heals itself", func() {
+			createPlatform()
+			markDeploymentAvailable(testGatewayNamespace, AgentgatewayReleaseName)
+			createAcceptedGatewayClass()
+
+			legacy := newGateway()
+			legacy.SetName(LegacyGatewayName)
+			legacy.SetNamespace(testGatewayNamespace)
+			legacy.SetLabels(map[string]string{ManagedByLabel: ManagedByValue})
+			Expect(unstructured.SetNestedMap(legacy.Object, map[string]any{
+				"gatewayClassName": GatewayClassName,
+				"listeners": []any{
+					map[string]any{
+						"name":     GatewayListenerName,
+						"port":     int64(GatewayPort),
+						"protocol": "HTTP",
+					},
+				},
+			}, "spec")).To(Succeed())
+			Expect(k8sClient.Create(ctx, legacy)).To(Succeed())
+
+			Eventually(func() bool {
+				gw := newGateway()
+				err := k8sClient.Get(ctx,
+					types.NamespacedName{Namespace: testGatewayNamespace, Name: LegacyGatewayName}, gw)
+				return apierrors.IsNotFound(err)
+			}, pollTimeout, pollInterval).Should(BeTrue(),
+				"the wedged pre-rename Gateway must be deleted")
+		})
+
+		It("leaves a Gateway of that name it did not create, which may be a cluster operator's own", func() {
+			createPlatform()
+			markDeploymentAvailable(testGatewayNamespace, AgentgatewayReleaseName)
+			createAcceptedGatewayClass()
+
+			foreign := newGateway()
+			foreign.SetName(LegacyGatewayName)
+			foreign.SetNamespace(testGatewayNamespace)
+			// No managed-by label: not ours.
+			Expect(unstructured.SetNestedMap(foreign.Object, map[string]any{
+				"gatewayClassName": GatewayClassName,
+				"listeners": []any{
+					map[string]any{
+						"name":     GatewayListenerName,
+						"port":     int64(GatewayPort),
+						"protocol": "HTTP",
+					},
+				},
+			}, "spec")).To(Succeed())
+			Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
+
+			// Wait for the operator to have reconciled past the prune, by
+			// waiting for the Gateway it does own.
+			Eventually(func() error {
+				gw := newGateway()
+				return k8sClient.Get(ctx,
+					types.NamespacedName{Namespace: testGatewayNamespace, Name: GatewayName}, gw)
+			}, pollTimeout, pollInterval).Should(Succeed())
+
+			Consistently(func() error {
+				gw := newGateway()
+				return k8sClient.Get(ctx,
+					types.NamespacedName{Namespace: testGatewayNamespace, Name: LegacyGatewayName}, gw)
+			}, "2s", pollInterval).Should(Succeed(),
+				"a Gateway without this operator's managed-by label must survive")
+		})
 	})
 
 	Describe("readiness", func() {
@@ -267,7 +378,7 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 			platform := getPlatform()
 			Expect(platform.Status.Phase).To(Equal(agentgatewayv1alpha1.PlatformReady))
 			Expect(platform.Status.GatewayURL).To(Equal(
-				"http://agentgateway.agentgateway-system.svc.cluster.local:4000"))
+				"http://agentgateway-educates.agentgateway-system.svc.cluster.local:4000"))
 			Expect(platform.Status.GatewayNamespace).To(Equal(testGatewayNamespace))
 
 			// The Gateway carries no addresses, confirming readiness did not

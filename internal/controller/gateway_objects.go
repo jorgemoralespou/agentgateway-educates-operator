@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -106,9 +107,10 @@ func unstructuredConditionTrue(u *unstructured.Unstructured, condType string) bo
 // user-facing field — a knob whose default is correct everywhere is surface
 // without a decision behind it (ADR-0005).
 //
-// The overlay is a strategic-merge patch on the generated ServiceSpec and is
-// retroactive: a Gateway created before the parameters existed is
-// re-reconciled to ClusterIP.
+// The overlay is a strategic-merge patch on the generated ServiceSpec. Creating
+// it is only half the job: an overlay nothing references is inert, so the
+// Gateway carries a spec.infrastructure.parametersRef pointing here. See
+// ensureGatewayParametersRef.
 func (r *AgentGatewayPlatformReconciler) ensureParameters(ctx context.Context, platform *agentgatewayv1alpha1.AgentGatewayPlatform, namespace string) error {
 	desired := newParameters()
 	desired.SetName(ParametersName)
@@ -143,12 +145,17 @@ func (r *AgentGatewayPlatformReconciler) ensureParameters(ctx context.Context, p
 // The GatewayClass is referenced but never created here: agentgateway's own
 // controller creates it, after leader election.
 func (r *AgentGatewayPlatformReconciler) ensureGateway(ctx context.Context, platform *agentgatewayv1alpha1.AgentGatewayPlatform, namespace string) error {
+	if err := r.pruneLegacyGateway(ctx, namespace); err != nil {
+		return err
+	}
+
 	live := newGateway()
 	err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: GatewayName}, live)
 	if err == nil {
-		// The Gateway exists. Its spec is not rewritten on every pass: doing so
-		// would fight anyone who attached an extra listener, and nothing in this
-		// operator's own configuration changes it.
+		// The Gateway exists. Its spec is not rewritten wholesale on every
+		// pass: doing so would fight anyone who attached an extra listener, and
+		// nothing in this operator's own configuration changes it. The
+		// parametersRef is the exception — see ensureGatewayParametersRef.
 		return r.ensureGatewayParametersRef(ctx, live)
 	}
 	if !apierrors.IsNotFound(err) {
@@ -162,6 +169,13 @@ func (r *AgentGatewayPlatformReconciler) ensureGateway(ctx context.Context, plat
 
 	spec := map[string]any{
 		"gatewayClassName": GatewayClassName,
+		"infrastructure": map[string]any{
+			"parametersRef": map[string]any{
+				"group": AgentgatewayGroup,
+				"kind":  KindAgentgatewayParameters,
+				"name":  ParametersName,
+			},
+		},
 		"listeners": []any{
 			map[string]any{
 				"name":     GatewayListenerName,
@@ -186,14 +200,75 @@ func (r *AgentGatewayPlatformReconciler) ensureGateway(ctx context.Context, plat
 	return nil
 }
 
-// ensureGatewayParametersRef is a no-op placeholder for per-Gateway parameters.
+// ensureGatewayParametersRef points an existing Gateway at the parameters
+// overlay, so a Gateway created before this operator wrote the ref still gets
+// ClusterIP.
 //
-// The ClusterIP overlay is attached at the GatewayClass level, which applies
-// cluster-wide and retroactively, so nothing needs to be written onto the
-// Gateway itself. Kept as a seam because agentgateway applies GatewayClass
-// overlays before Gateway ones, so a per-Gateway override remains possible
-// later without restructuring.
-func (r *AgentGatewayPlatformReconciler) ensureGatewayParametersRef(_ context.Context, _ *unstructured.Unstructured) error {
+// The ref goes on the Gateway rather than the GatewayClass because the
+// GatewayClass is agentgateway's own object — its controller creates it after
+// leader election (ADR-0005) — and writing a field into a resource another
+// controller owns invites a write loop where each side reasserts its version.
+// The Gateway is this operator's, so nothing contends for it. agentgateway
+// applies GatewayClass overlays first and Gateway overlays second, so the
+// Gateway-level ref also wins outright over anything set cluster-wide.
+//
+// Only the ref is written; the rest of the spec is left alone.
+func (r *AgentGatewayPlatformReconciler) ensureGatewayParametersRef(ctx context.Context, gw *unstructured.Unstructured) error {
+	desired := map[string]any{
+		"group": AgentgatewayGroup,
+		"kind":  KindAgentgatewayParameters,
+		"name":  ParametersName,
+	}
+
+	current, found, err := unstructured.NestedMap(gw.Object, "spec", "infrastructure", "parametersRef")
+	if err != nil {
+		return err
+	}
+	if found && equality.Semantic.DeepEqual(current, desired) {
+		return nil
+	}
+
+	if err := unstructured.SetNestedMap(gw.Object, desired,
+		"spec", "infrastructure", "parametersRef"); err != nil {
+		return err
+	}
+	return r.Update(ctx, gw)
+}
+
+// pruneLegacyGateway removes the Gateway an earlier build created under the
+// name the control-plane Helm release also uses.
+//
+// That Gateway can never become Programmed — see LegacyGatewayName — and
+// renaming a Kubernetes object means creating a new one, so the wedged original
+// would otherwise stay behind logging a rejected apply forever. Deleting it
+// takes its data-plane Deployment and Service with it and leaves the
+// control-plane objects of the same name untouched, since those belong to the
+// Helm release and were never owned by the Gateway.
+//
+// Guarded on this operator's own managed-by label: a cluster operator who
+// hand-wrote a Gateway called "agentgateway", or who points spec.provider at an
+// external one, keeps it.
+func (r *AgentGatewayPlatformReconciler) pruneLegacyGateway(ctx context.Context, namespace string) error {
+	if LegacyGatewayName == GatewayName {
+		return nil
+	}
+
+	legacy := newGateway()
+	err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: LegacyGatewayName}, legacy)
+	if err != nil {
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			return nil
+		}
+		return err
+	}
+
+	if legacy.GetLabels()[ManagedByLabel] != ManagedByValue {
+		return nil
+	}
+
+	if err := r.Delete(ctx, legacy); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete legacy Gateway %s/%s: %w", namespace, LegacyGatewayName, err)
+	}
 	return nil
 }
 
