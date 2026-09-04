@@ -350,9 +350,12 @@ route to the pod. Weigh that before enabling it on a shared cluster:
   Kubernetes mode the data plane takes its configuration over xDS, so the
   local-config endpoints are empty.
 
-The data-plane Service already publishes port 15000: agentgateway derives the
-Service ports from the listener set, so nothing has to be added there. Until
-this field is set, connections to that port are refused rather than hanging.
+Setting the field does two things, and neither works without the other: it binds
+the admin listener to all interfaces, and it publishes port 15000 on the
+data-plane Service. agentgateway derives that Service's ports from the Gateway's
+listeners, and the admin interface is not a listener, so a gateway serving LLM
+traffic on 4000 has exactly one Service port until the operator adds the second
+one. Until then the port is not merely idle, it is absent.
 
 If you only need the UI yourself, prefer a port-forward and leave the field off:
 
@@ -510,11 +513,20 @@ with the model or its address, not with this operator.
 
 ### The gateway UI tab shows a connection error
 
-The admin listener is bound to loopback, which is the default. Set
+The admin interface is off, which is the default. Set
 `adminInterface.exposed: true` on the platform, see
-[Exposing the gateway UI](#exposing-the-gateway-ui). The port is refused rather
-than empty until then, so the tab reports a connection failure instead of
-rendering a blank page.
+[Exposing the gateway UI](#exposing-the-gateway-ui).
+
+Check the Service first, since a missing port is the quicker of the two halves
+to confirm:
+
+```console
+kubectl get svc -n agentgateway-system agentgateway-educates \
+  -o jsonpath='{.spec.ports[*].port}'
+```
+
+A single `4000` means the field is off or has not reconciled. Both `4000` and
+`15000` mean the Service is right and the listener is the remaining question.
 
 Confirm which state the listener is in from the data plane's own log:
 

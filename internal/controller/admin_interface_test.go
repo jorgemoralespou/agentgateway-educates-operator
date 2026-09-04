@@ -92,6 +92,135 @@ var _ = Describe("the admin interface overlay", func() {
 		})
 	})
 
+	// agentgateway derives the generated Service's ports from the Gateway's
+	// listeners, and the admin interface is not a listener. An earlier build
+	// bound the listener and stopped there, which was only ever verified on a
+	// cluster where the port had been added by hand: on a fresh install the
+	// Service has one port and the UI is unreachable however the listener is
+	// bound.
+	Describe("applyAdminServicePort", func() {
+		It("publishes port 15000 when exposed, because the listener set never yields it", func() {
+			u := newParameters()
+
+			Expect(applyAdminServicePort(u, true)).To(Succeed())
+
+			ports, found, err := unstructured.NestedSlice(u.Object, "spec", "service", "spec", "ports")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue(), "the overlay must publish the admin port")
+			Expect(ports).To(HaveLen(1))
+
+			port, ok := ports[0].(map[string]any)
+			Expect(ok).To(BeTrue())
+			Expect(port["port"]).To(Equal(int64(15000)))
+			Expect(port["targetPort"]).To(Equal(int64(15000)))
+			Expect(port["protocol"]).To(Equal("TCP"))
+		})
+
+		It("publishes no port when not exposed", func() {
+			u := newParameters()
+
+			Expect(applyAdminServicePort(u, false)).To(Succeed())
+
+			_, found, err := unstructured.NestedSlice(u.Object, "spec", "service", "spec", "ports")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse())
+		})
+
+		// A Service port left pointing at an unbound listener accepts
+		// connections and then refuses them, which reads as a broken gateway
+		// rather than a disabled feature.
+		It("withdraws the port when the interface is turned off", func() {
+			u := newParameters()
+			Expect(applyAdminServicePort(u, true)).To(Succeed())
+
+			Expect(applyAdminServicePort(u, false)).To(Succeed())
+
+			_, found, err := unstructured.NestedSlice(u.Object, "spec", "service", "spec", "ports")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse(), "the port must not outlive the listener binding")
+		})
+
+		It("is idempotent, so a steady-state reconcile does not duplicate the port", func() {
+			u := newParameters()
+
+			Expect(applyAdminServicePort(u, true)).To(Succeed())
+			Expect(applyAdminServicePort(u, true)).To(Succeed())
+
+			ports, _, err := unstructured.NestedSlice(u.Object, "spec", "service", "spec", "ports")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ports).To(HaveLen(1), "a repeated reconcile must not append a second entry")
+		})
+
+		// The overlay merges by port number, so a cluster operator who has
+		// published their own port keeps it through both transitions.
+		It("leaves a cluster operator's own Service ports alone", func() {
+			u := newParameters()
+			Expect(unstructured.SetNestedSlice(u.Object, []any{
+				map[string]any{"name": "extra", "port": int64(9000), "protocol": "TCP"},
+			}, "spec", "service", "spec", "ports")).To(Succeed())
+
+			Expect(applyAdminServicePort(u, true)).To(Succeed())
+			Expect(applyAdminServicePort(u, false)).To(Succeed())
+
+			ports, found, err := unstructured.NestedSlice(u.Object, "spec", "service", "spec", "ports")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue(), "a foreign port must survive the withdrawal")
+			Expect(ports).To(HaveLen(1))
+			port, ok := ports[0].(map[string]any)
+			Expect(ok).To(BeTrue())
+			Expect(port["port"]).To(Equal(int64(9000)))
+		})
+	})
+
+	// Exposing the interface is only complete when both halves are written:
+	// either one alone yields a gateway that looks configured and is not.
+	Describe("applyAdminInterface", func() {
+		It("writes both the bind address and the Service port", func() {
+			u := newParameters()
+
+			Expect(applyAdminInterface(u, true)).To(Succeed())
+
+			addr, found, err := unstructured.NestedString(u.Object,
+				"spec", "rawConfig", "config", "adminAddr")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue(), "the listener must be bound")
+			Expect(addr).To(Equal("[::]:15000"))
+
+			ports, found, err := unstructured.NestedSlice(u.Object, "spec", "service", "spec", "ports")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue(), "the port must be published alongside the binding")
+			Expect(ports).To(HaveLen(1))
+		})
+
+		It("withdraws both when turned off", func() {
+			u := newParameters()
+			Expect(applyAdminInterface(u, true)).To(Succeed())
+
+			Expect(applyAdminInterface(u, false)).To(Succeed())
+
+			_, found, err := unstructured.NestedMap(u.Object, "spec", "rawConfig")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse())
+			_, found, err = unstructured.NestedSlice(u.Object, "spec", "service", "spec", "ports")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse())
+		})
+
+		It("leaves the Service type alone, which is set independently of this feature", func() {
+			u := newParameters()
+			Expect(unstructured.SetNestedField(u.Object,
+				"ClusterIP", "spec", "service", "spec", "type")).To(Succeed())
+
+			Expect(applyAdminInterface(u, true)).To(Succeed())
+			Expect(applyAdminInterface(u, false)).To(Succeed())
+
+			svcType, found, err := unstructured.NestedString(u.Object, "spec", "service", "spec", "type")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue(), "the Service type must survive both transitions")
+			Expect(svcType).To(Equal("ClusterIP"))
+		})
+	})
+
 	Describe("adminInterfaceExposed", func() {
 		It("reports false when the field is absent, keeping the unauthenticated UI off by default", func() {
 			platform := &agentgatewayv1alpha1.AgentGatewayPlatform{}

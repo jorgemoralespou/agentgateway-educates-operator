@@ -133,7 +133,7 @@ func (r *AgentGatewayPlatformReconciler) ensureParameters(ctx context.Context, p
 		"ClusterIP", "spec", "service", "spec", "type"); err != nil {
 		return err
 	}
-	if err := applyAdminAddr(desired, adminInterfaceExposed(platform)); err != nil {
+	if err := applyAdminInterface(desired, adminInterfaceExposed(platform)); err != nil {
 		return err
 	}
 
@@ -152,10 +152,83 @@ func (r *AgentGatewayPlatformReconciler) ensureParameters(ctx context.Context, p
 		"ClusterIP", "spec", "service", "spec", "type"); err != nil {
 		return err
 	}
-	if err := applyAdminAddr(live, adminInterfaceExposed(platform)); err != nil {
+	if err := applyAdminInterface(live, adminInterfaceExposed(platform)); err != nil {
 		return err
 	}
 	return r.Update(ctx, live)
+}
+
+// applyAdminInterface writes, or clears, everything the admin interface needs:
+// the listener's bind address and the Service port that reaches it.
+//
+// Both halves are required and neither is sufficient alone. Binding the
+// listener without publishing the port leaves the UI reachable only from
+// inside the pod; publishing the port without binding the listener leaves a
+// Service port whose connections are refused. Splitting them across two places
+// is what makes a half-configured gateway look like a working one.
+func applyAdminInterface(u *unstructured.Unstructured, exposed bool) error {
+	if err := applyAdminAddr(u, exposed); err != nil {
+		return err
+	}
+	return applyAdminServicePort(u, exposed)
+}
+
+// applyAdminServicePort adds, or removes, the data-plane Service port for the
+// admin interface.
+//
+// agentgateway derives the generated Service's ports from the Gateway's
+// listeners, and the admin interface is not a listener: a Gateway serving LLM
+// traffic on 4000 gets a Service with exactly one port, whatever the admin
+// listener is bound to. The port therefore has to be added explicitly, through
+// the same overlay that sets the Service type.
+//
+// The overlay is a strategic merge patch, and ServiceSpec.Ports merges on the
+// `port` key, so naming only this port leaves the generated listener ports
+// untouched rather than replacing the list. Removing it on the way back down
+// matters as much as adding it: a Service port left pointing at a listener that
+// is no longer bound accepts connections and then refuses them, which reads as
+// a broken gateway rather than a disabled feature.
+func applyAdminServicePort(u *unstructured.Unstructured, exposed bool) error {
+	const (
+		adminPortName = "admin"
+		adminPort     = int64(15000)
+	)
+
+	ports, _, err := unstructured.NestedSlice(u.Object, "spec", "service", "spec", "ports")
+	if err != nil {
+		return err
+	}
+
+	// Drop any existing entry for this port first, so the write is idempotent
+	// and so disabling is a plain removal. A cluster operator's own ports are
+	// keyed by a different port number and survive untouched.
+	kept := make([]any, 0, len(ports))
+	for _, raw := range ports {
+		port, ok := raw.(map[string]any)
+		if !ok {
+			kept = append(kept, raw)
+			continue
+		}
+		if value, found, err := unstructured.NestedInt64(port, "port"); err == nil && found && value == adminPort {
+			continue
+		}
+		kept = append(kept, raw)
+	}
+
+	if exposed {
+		kept = append(kept, map[string]any{
+			"name":       adminPortName,
+			"port":       adminPort,
+			"protocol":   "TCP",
+			"targetPort": adminPort,
+		})
+	}
+
+	if len(kept) == 0 {
+		unstructured.RemoveNestedField(u.Object, "spec", "service", "spec", "ports")
+		return nil
+	}
+	return unstructured.SetNestedSlice(u.Object, kept, "spec", "service", "spec", "ports")
 }
 
 // adminInterfaceExposed reports whether the admin interface should be bound to

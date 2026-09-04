@@ -25,9 +25,9 @@ spec:
     # requests they make on page 1 arrive at the gateway.
     #
     # Requires the platform to be installed with `adminInterface.exposed: true`.
-    # agentgateway binds this listener to loopback by default, and the port is
-    # refused rather than merely empty until that is set: the tab renders a
-    # connection error, not a blank page. See docs/deployment.md.
+    # Without it the gateway keeps the admin listener on loopback and the
+    # data-plane Service publishes no port 15000 at all, so the tab renders a
+    # connection error rather than a blank page. See docs/deployment.md.
     #
     # The ingress is what makes the UI reachable at all. A dashboard `url`
     # alone would be loaded by the attendee's browser, which cannot resolve a

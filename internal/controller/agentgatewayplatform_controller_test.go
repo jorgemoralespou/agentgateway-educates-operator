@@ -303,6 +303,16 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(found).To(BeFalse(),
 				"the unauthenticated admin UI must stay loopback-only by default")
+
+			// The Service half matters as much as the binding. agentgateway
+			// derives the generated Service's ports from the Gateway's
+			// listeners and the admin interface is not one, so an unexposed
+			// platform must not publish a port that nothing answers on.
+			_, found, err = unstructured.NestedSlice(params.Object,
+				"spec", "service", "spec", "ports")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeFalse(),
+				"no admin Service port may be published by default")
 		})
 	})
 

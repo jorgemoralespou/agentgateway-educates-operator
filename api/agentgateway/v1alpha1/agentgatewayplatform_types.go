@@ -107,13 +107,14 @@ type ExternalAgentgatewaySpec struct {
 // Attendees who reach the UI see one shared view of the whole cluster's
 // gateway, not their own session. That is a teaching aid, not isolation.
 type AdminInterfaceSpec struct {
-	// Exposed binds the admin listener to all interfaces instead of loopback,
-	// making the UI reachable through the data-plane Service on port 15000.
+	// Exposed binds the admin listener to all interfaces instead of loopback and
+	// publishes port 15000 on the data-plane Service, making the UI reachable
+	// over in-cluster DNS.
 	//
-	// The Service already publishes that port: agentgateway's controller derives
-	// the Service ports from the listener set, so nothing has to be added there.
-	// The port simply has nothing listening on it from outside the pod until
-	// this is set, and connections are refused rather than hanging.
+	// Both halves are needed. agentgateway derives the generated Service's ports
+	// from the Gateway's listeners, and the admin interface is not a listener, so
+	// a gateway serving LLM traffic on 4000 has exactly one Service port until
+	// this operator adds the second one.
 	// +kubebuilder:default=false
 	// +optional
 	Exposed bool `json:"exposed,omitempty"`
