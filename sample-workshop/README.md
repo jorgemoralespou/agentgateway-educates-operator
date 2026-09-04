@@ -39,6 +39,27 @@ A cluster running Educates with this operator installed, a ready
 `AgentGatewayPlatform`, and the catalog applied with a real provider
 credential. See [the deployment guide](../docs/deployment.md).
 
+## The Gateway tab
+
+`resources/workshop.yaml` adds a **Gateway** dashboard tab showing
+agentgateway's own debugging UI, so attendees can watch their requests arrive.
+
+It needs the platform installed with `adminInterface.exposed: true`. Without
+that, agentgateway keeps the UI on loopback and the tab shows a connection
+error rather than a blank page. See
+[Exposing the gateway UI](../docs/deployment.md#exposing-the-gateway-ui) for
+what that opens up: the interface is unauthenticated and the view is shared
+cluster-wide, so every attendee sees the same gateway rather than their own
+session.
+
+The `session.ingresses` entry beside it is not optional decoration. A dashboard
+`url` is loaded by the attendee's browser, which cannot resolve a ClusterIP, so
+the ingress is what proxies the UI from inside the cluster, and it keeps
+Educates' session authentication in front of it.
+
+Drop both blocks to remove the tab; nothing else in the workshop depends on
+them.
+
 ## Running it locally
 
 Against a local cluster from `educates create-cluster`:

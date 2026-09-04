@@ -21,6 +21,42 @@ spec:
     namespaces:
       budget: small
 
+    # A tab onto agentgateway's own debugging UI, so attendees can watch the
+    # requests they make on page 1 arrive at the gateway.
+    #
+    # Requires the platform to be installed with `adminInterface.exposed: true`.
+    # agentgateway binds this listener to loopback by default, and the port is
+    # refused rather than merely empty until that is set: the tab renders a
+    # connection error, not a blank page. See docs/deployment.md.
+    #
+    # The ingress is what makes the UI reachable at all. A dashboard `url`
+    # alone would be loaded by the attendee's browser, which cannot resolve a
+    # ClusterIP; `ingresses` proxies it through the workshop dashboard instead,
+    # from inside the cluster.
+    ingresses:
+      - name: agentgateway
+        protocol: http
+        # The shared gateway, in the platform's namespace rather than the
+        # attendee's. This is the default from `bundledAgentgateway.namespace`;
+        # a platform installed elsewhere needs this line changed to match.
+        host: agentgateway-educates.agentgateway-system.svc.$(cluster_domain)
+        port: 15000
+        # No `path` here, deliberately. The UI is a single-page app built with
+        # its base pinned to /ui/ and its API calls rooted at /api/, with no
+        # runtime base path, so it only works when proxied at the root of its
+        # own hostname. Scoping this ingress to a subpath serves the HTML and
+        # then 404s every asset.
+
+    # The tab itself. Custom tabs come after the built-in ones, so this lands
+    # to the right of the terminal and editor.
+    #
+    # Named for the gateway rather than for the attendee: the UI shows one
+    # shared, cluster-wide view of every session's traffic, not this
+    # attendee's. That is deliberate for a demo, and page 1 says so.
+    dashboards:
+      - name: Gateway
+        url: $(ingress_protocol)://agentgateway-$(session_name).$(ingress_domain)/ui/
+
     # The attendee's whole integration surface. Standard OpenAI-compatible
     # client libraries pick both of these up with no configuration, so workshop
     # content can use any SDK without knowing the gateway exists.

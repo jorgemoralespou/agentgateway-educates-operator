@@ -133,6 +133,9 @@ func (r *AgentGatewayPlatformReconciler) ensureParameters(ctx context.Context, p
 		"ClusterIP", "spec", "service", "spec", "type"); err != nil {
 		return err
 	}
+	if err := applyAdminAddr(desired, adminInterfaceExposed(platform)); err != nil {
+		return err
+	}
 
 	live := newParameters()
 	err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: ParametersName}, live)
@@ -149,7 +152,64 @@ func (r *AgentGatewayPlatformReconciler) ensureParameters(ctx context.Context, p
 		"ClusterIP", "spec", "service", "spec", "type"); err != nil {
 		return err
 	}
+	if err := applyAdminAddr(live, adminInterfaceExposed(platform)); err != nil {
+		return err
+	}
 	return r.Update(ctx, live)
+}
+
+// adminInterfaceExposed reports whether the admin interface should be bound to
+// all interfaces.
+func adminInterfaceExposed(platform *agentgatewayv1alpha1.AgentGatewayPlatform) bool {
+	return platform != nil &&
+		platform.Spec.AdminInterface != nil &&
+		platform.Spec.AdminInterface.Exposed
+}
+
+// applyAdminAddr writes, or clears, the admin listener's bind address in the
+// overlay's rawConfig.
+//
+// rawConfig is merged into the data plane's generated config file, and the key
+// has to sit under a nested `config` block: agentgateway rejects a top-level
+// adminAddr outright ("unknown field `adminAddr`, expected one of `config`,
+// `binds`, ...") and the pod then crash-loops rather than starting with the
+// setting ignored. That failure mode is why this is built by hand here instead
+// of being handed to a cluster operator as raw YAML to get right.
+//
+// The value binds both address families, matching how agentgateway's own
+// stats and readiness listeners are configured. Its absence is not neutral:
+// leaving the key behind after the field is turned off would keep the interface
+// exposed until someone edited the overlay, so disabling actively removes it.
+// Only this one key is touched, so any other rawConfig a cluster operator has
+// set survives, and an emptied config block is pruned rather than left as
+// noise.
+func applyAdminAddr(u *unstructured.Unstructured, exposed bool) error {
+	const adminAddrAllInterfaces = "[::]:15000"
+
+	if exposed {
+		return unstructured.SetNestedField(u.Object,
+			adminAddrAllInterfaces, "spec", "rawConfig", "config", "adminAddr")
+	}
+
+	unstructured.RemoveNestedField(u.Object, "spec", "rawConfig", "config", "adminAddr")
+
+	// Prune the containers this operator would have created, but only when they
+	// are empty: a cluster operator's own sibling keys keep them alive.
+	cfg, found, err := unstructured.NestedMap(u.Object, "spec", "rawConfig", "config")
+	if err != nil {
+		return err
+	}
+	if found && len(cfg) == 0 {
+		unstructured.RemoveNestedField(u.Object, "spec", "rawConfig", "config")
+	}
+	raw, found, err := unstructured.NestedMap(u.Object, "spec", "rawConfig")
+	if err != nil {
+		return err
+	}
+	if found && len(raw) == 0 {
+		unstructured.RemoveNestedField(u.Object, "spec", "rawConfig")
+	}
+	return nil
 }
 
 // ensureGateway creates the Gateway, which is what causes agentgateway to
