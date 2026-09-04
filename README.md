@@ -43,8 +43,8 @@ runaway loop can exhaust the budget for the whole room and there is no way to
 tell who did it. The second turns the first twenty minutes of a workshop into
 account creation.
 
-This operator takes the third option — a real key per attendee, minted at
-session start, budgeted independently, and revoked at session end — and makes
+This operator takes the third option: a real key per attendee, minted at
+session start, budgeted independently, and revoked at session end, and makes
 it the author's default rather than a project of its own.
 
 ## What it installs
@@ -60,10 +60,16 @@ Three custom resources, in `agentgateway.operators.educates.dev/v1alpha1`:
 A cluster operator writes the first two once. Workshop authors only ever write
 the third.
 
-Models are addressed by **catalog name** — `fast`, `smart` — not by a
+Models are addressed by **catalog name**, `fast`, `smart`, not by a
 provider's model name. Which upstream model each resolves to is a cluster-level
 decision, so re-pointing `fast` at a different provider is a catalog edit and
 touches no workshop.
+
+Any of agentgateway's providers works, including a local Ollama, which needs no
+credential and keeps traffic on your network. A locally served reasoning model
+can be slower than the gateway's default patience, in which case set
+[`requestTimeout`](docs/deployment.md#declaring-the-catalog) on the catalog,
+without it the attendee sees a connection error rather than a slow reply.
 
 ## How a key is made and unmade
 
@@ -72,7 +78,7 @@ different lifecycles.
 
 The **Secret** holds the plaintext key and lives in the *workshop* namespace,
 where the attendee's pod can resolve a `secretKeyRef`. It is owned by the
-*session* namespace, so Kubernetes garbage-collects it when the session ends —
+*session* namespace, so Kubernetes garbage-collects it when the session ends,
 no controller has to be running for revocation to happen.
 
 The **registration** lives in the gateway's namespace and holds only
@@ -108,7 +114,7 @@ provider credential. The guide walks through each.
 [`sample-workshop/`](sample-workshop/) is a four-page Educates workshop that
 demonstrates the whole thing: get a key, see where it came from, exhaust a
 budget, watch it be revoked. It doubles as the operator's living documentation
-— the `session.objects` snippet it shows attendees is its own.
+- the `session.objects` snippet it shows attendees is its own.
 
 ## Runs on amd64 and arm64
 
@@ -116,12 +122,34 @@ Released images are manifest lists covering `linux/amd64` and `linux/arm64`, so
 no architecture-specific values, node selectors or affinity rules are needed on
 either.
 
+## Accessing the agentgateway UI
+
+The agentgateway UI is a built-in web interface that runs alongside the proxy.
+It is fully interactive, so you can inspect the current configuration and
+manage the proxy without restarting agentgateway.
+
+Port-forward the data plane deployment on its admin port:
+
+```console
+kubectl port-forward -n agentgateway-system deploy/agentgateway-educates 15000:15000
+```
+
+Then open the `/ui` path in a browser:
+
+```console
+open http://localhost:15000/ui
+```
+
+The deployment is named after the Gateway rather than the Helm release, so it
+is `agentgateway-educates` and not `agentgateway`, which is the control plane
+and serves no UI.
+
 ## Documentation
 
-- [Deployment guide](docs/deployment.md) — install, configure, upgrade, uninstall.
-- [Chart reference](charts/agentgateway-educates-operator/README.md) — values, RBAC, uninstall order.
+- [Deployment guide](docs/deployment.md), install, configure, upgrade, uninstall.
+- [Chart reference](charts/agentgateway-educates-operator/README.md), values, RBAC, uninstall order.
 - [Sample workshop](sample-workshop/README.md).
-- [Glossary](CONTEXT.md) — the vocabulary this project uses, and the terms it avoids.
+- [Glossary](CONTEXT.md): the vocabulary this project uses, and the terms it avoids.
 - [Live-workshop validation runbook](docs/validation/workshop-validation.md).
 - Architecture decisions: [ADR index](docs/adr/).
 

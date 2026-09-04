@@ -7,7 +7,7 @@ import (
 // ModelProvider is an LLM provider agentgateway can reach.
 //
 // These values are passed through to AgentgatewayModel.spec.provider, so the
-// casing is agentgateway's, not ours — `OpenAI`, not `openai`. A mismatch is
+// casing is agentgateway's, not ours: `OpenAI`, not `openai`. A mismatch is
 // rejected by the CRD's own validation with an unhelpful message, so the enum is
 // restated here to catch it at the catalog instead.
 // +kubebuilder:validation:Enum=Anthropic;Azure;Baseten;Bedrock;Cerebras;Cohere;Deepinfra;Deepseek;Fireworks;Gemini;Groq;Huggingface;Mistral;Ollama;OpenAI;Openrouter;TogetherAI;VertexAI;XAI
@@ -46,7 +46,7 @@ type CredentialReference struct {
 // The catalog name is deliberately not the upstream model's name, so the binding
 // can change without touching workshop content.
 type CatalogModel struct {
-	// Name is what attendees address — `fast`, `smart`. Never the provider's own
+	// Name is what attendees address, `fast`, `smart`. Never the provider's own
 	// model name.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
@@ -56,7 +56,7 @@ type CatalogModel struct {
 	// Provider is the LLM provider serving this model.
 	Provider ModelProvider `json:"provider"`
 
-	// Model is the provider's own model name — `gpt-4o-mini`,
+	// Model is the provider's own model name, `gpt-4o-mini`,
 	// `claude-sonnet-4-0`. Never visible to attendees.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
@@ -92,6 +92,21 @@ type AgentGatewayCatalogSpec struct {
 	// behaves under load.
 	// +optional
 	RateLimit *RateLimitSpec `json:"rateLimit,omitempty"`
+
+	// RequestTimeout is how long the gateway waits for a complete response from
+	// an upstream model.
+	//
+	// Exists for slow models rather than as a tuning knob. A reasoning model
+	// served locally by Ollama can take well over a minute for one reply, past
+	// agentgateway's own default, and the attendee sees `upstream call failed:
+	// connection closed before message completed`, which reads like a broken
+	// gateway, not a slow model.
+	//
+	// A Go duration string: "90s", "3m". Left unset, agentgateway's default
+	// applies, which is right for every hosted provider.
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$`
+	// +optional
+	RequestTimeout string `json:"requestTimeout,omitempty"`
 }
 
 // CatalogPhase is an advisory summary. Conditions are authoritative.
@@ -136,7 +151,7 @@ type AgentGatewayCatalogStatus struct {
 
 // AgentGatewayCatalog declares the models the Gateway offers.
 //
-// Configures a Gateway; never installs one — that is AgentGatewayPlatform's job,
+// Configures a Gateway; never installs one: that is AgentGatewayPlatform's job,
 // and this resource waits for it to be ready.
 //
 // +kubebuilder:object:root=true
@@ -182,7 +197,7 @@ func init() {
 // Defaulted to FailClosed: agentgateway's CRD declares no schema default, so an
 // omitted value would leave the field absent from the rendered policy and leave
 // the choice to the data plane. For a workshop, an outage that silently removes
-// budget enforcement is worse than one that visibly stops traffic (ADR-0003) —
+// budget enforcement is worse than one that visibly stops traffic (ADR-0003),
 // but it stays a cluster-operator decision, not this operator's.
 func (c *AgentGatewayCatalog) FailureMode() RateLimitFailureMode {
 	if c.Spec.RateLimit != nil && c.Spec.RateLimit.FailureMode != "" {

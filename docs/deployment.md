@@ -2,7 +2,7 @@
 
 Installing and operating the agentgateway Educates operator. For what it is and
 why, see the [README](../README.md). For the full values table and RBAC detail,
-see the [chart reference](../charts/agentgateway-educates-operator/README.md) —
+see the [chart reference](../charts/agentgateway-educates-operator/README.md),
 this guide links to it rather than repeating it.
 
 ## Contents
@@ -26,8 +26,8 @@ this guide links to it rather than repeating it.
   v4 requires 1.34+. The chart declares `kubeVersion: ">=1.32.0-0"`.
 - **Helm 3.8 or later**, for OCI registry support.
 - **An Educates cluster**, if you intend to use this from workshops. The
-  operator runs without Educates — it reads `EducatesClusterConfig` if present
-  and treats its absence as normal — but a session grant only makes sense
+  operator runs without Educates: it reads `EducatesClusterConfig` if present
+  and treats its absence as normal, but a session grant only makes sense
   inside a workshop.
 - **An LLM provider account** and an API key. Nothing here provisions one.
 - **amd64 or arm64.** Released images are manifest lists covering both; no
@@ -54,11 +54,11 @@ nothing and needs no such permission. See
 
 agentgateway is a Gateway API implementation, so the
 `gateway.networking.k8s.io` CRDs must exist. There are two supported
-arrangements and they are equally valid — but the settings must agree, and
+arrangements and they are equally valid, but the settings must agree, and
 getting that wrong is the most common way to end up with a platform that never
 becomes ready.
 
-### Path A — the chart installs Gateway API (default)
+### Path A: the chart installs Gateway API (default)
 
 For a cluster that does not already have Gateway API. Nothing to configure:
 
@@ -74,10 +74,10 @@ platform's default `gatewayAPI: Managed` proceeds once they are established.
 These CRDs are annotated `helm.sh/resource-policy: keep`, so `helm uninstall`
 leaves them behind (ADR-0006).
 
-### Path B — the cluster already owns Gateway API
+### Path B: the cluster already owns Gateway API
 
-For a cluster where an ingress controller — Contour, Istio, NGINX Gateway
-Fabric — already installs and owns the Gateway API CRDs. This operator must not
+For a cluster where an ingress controller, Contour, Istio, NGINX Gateway
+Fabric, already installs and owns the Gateway API CRDs. This operator must not
 fight it.
 
 **Two settings, and they must match.** On the chart:
@@ -139,7 +139,7 @@ helm install agentgateway-educates-operator \
 Values are documented in
 [the chart reference](../charts/agentgateway-educates-operator/README.md#values).
 The ones that matter most often: `image.repository` and `image.tag` to run a
-build from elsewhere, `gatewayAPI.install` as above, and `resources` — the
+build from elsewhere, `gatewayAPI.install` as above, and `resources`, the
 chart sets none, so the operator runs burstable by default.
 
 ## Declaring the platform
@@ -234,6 +234,23 @@ edit and no workshop changes.
 service is unreachable rather than letting them through unmetered. For a
 workshop handing out budgeted keys, that is the safer failure.
 
+`requestTimeout` is optional and usually omitted. Left unset, agentgateway's
+own default applies, which suits every hosted provider. Raise it for a slow
+local model:
+
+```yaml
+spec:
+  models: [...]
+  requestTimeout: 180s
+```
+
+A reasoning model served by Ollama on a laptop can take minutes over a single
+reply, and past the default the attendee sees `upstream call failed: connection
+closed before message completed`, which reads like a broken gateway rather
+than a slow model. The value is a Go duration (`90s`, `3m`); anything else is
+rejected when you apply the catalog. It applies to every model in the catalog,
+since one policy governs the Gateway.
+
 Supported providers: Anthropic, Azure, Baseten, Bedrock, Cerebras, Cohere,
 Deepinfra, Deepseek, Fireworks, Gemini, Groq, Huggingface, Mistral, Ollama,
 OpenAI, Openrouter, TogetherAI, VertexAI, XAI. Ollama also requires `baseURL`.
@@ -292,7 +309,7 @@ session:
 
 **`namespace: $(workshop_namespace)` is required.** Without it the grant lands
 in the session namespace, where the Secret it creates cannot be resolved by the
-attendee's pod — that pod runs in the workshop namespace and a `secretKeyRef`
+attendee's pod: that pod runs in the workshop namespace and a `secretKeyRef`
 only resolves within its own namespace. The operator rejects a misplaced grant
 with `PlacementValid=False` and a message naming the fix, rather than failing
 silently.
@@ -344,7 +361,7 @@ those releases behind with nothing left to drain them.
 
 Left behind on purpose:
 
-- **The operator's own CRDs**, in `crds/` — Helm never removes those.
+- **The operator's own CRDs**, in `crds/`, Helm never removes those.
 - **The Gateway API CRDs**, by an explicit `resource-policy: keep`. Removing
   Gateway API from under an ingress controller that adopted it would be worse
   than leaving them (ADR-0006).
@@ -362,7 +379,7 @@ kubectl get agentgatewayplatform cluster -o jsonpath='{range .status.conditions[
 ```
 
 If it is `False` with a message about CRDs not being present, the Gateway API
-settings disagree — see [Gateway API: choose a path](#gateway-api-choose-a-path).
+settings disagree, see [Gateway API: choose a path](#gateway-api-choose-a-path).
 Either the chart was installed with `gatewayAPI.install=false` while the
 platform says `Managed`, or the CRDs were removed after installation.
 
@@ -373,7 +390,7 @@ picks them up without a restart.
 
 `PlacementValid=False` means the grant is in the session namespace instead of
 the workshop namespace. Add `namespace: $(workshop_namespace)` to the object in
-`session.objects`. This is deliberately not retried — it needs an author fix,
+`session.objects`. This is deliberately not retried: it needs an author fix,
 not a requeue.
 
 ### An attendee gets 401
@@ -387,7 +404,7 @@ kubectl get configmap "$SESSION-agentgateway" -n agentgateway-system
 ```
 
 If the Secret exists but the registration does not, the session did not reach
-`Ready` — check its conditions.
+`Ready`, check its conditions.
 
 ### An attendee gets 404 on the model
 
@@ -400,8 +417,27 @@ Their budget is exhausted. Budgets are per session; a new session gets a new
 one. Note that rate limiting runs *before* prompt guards, so requests rejected
 by a guardrail still consume budget.
 
+### An attendee gets `upstream call failed: connection closed before message completed`
+
+The model took longer to answer than the gateway was willing to wait. Common
+with a reasoning model served locally: it is working, just slowly, and nothing
+in the platform or catalog status reports a problem.
+
+Confirm by calling the provider directly, bypassing the gateway, and timing it:
+
+```console
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' \
+  -X POST http://<your-ollama>:11434/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"<model>","messages":[{"role":"user","content":"hi"}],"stream":false}'
+```
+
+A `200` after a long wait means the model is fine and the timeout is the
+limit, raise `requestTimeout` on the catalog. A failure there is a problem
+with the model or its address, not with this operator.
+
 ### Leaked registrations
 
-If a cleanup gave up — the operator logs loudly when it does — the runbook has
+If a cleanup gave up, the operator logs loudly when it does, the runbook has
 a [recovery procedure](validation/workshop-validation.md#recovering-leaked-registrations)
 using label selectors.

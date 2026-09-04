@@ -32,7 +32,7 @@ spec:
         description: |-
           AgentGatewayCatalog declares the models the Gateway offers.
 
-          Configures a Gateway; never installs one — that is AgentGatewayPlatform's job,
+          Configures a Gateway; never installs one: that is AgentGatewayPlatform's job,
           and this resource waits for it to be ready.
         properties:
           apiVersion:
@@ -94,14 +94,14 @@ spec:
                       type: object
                     model:
                       description: |-
-                        Model is the provider's own model name — `gpt-4o-mini`,
+                        Model is the provider's own model name, `gpt-4o-mini`,
                         `claude-sonnet-4-0`. Never visible to attendees.
                       maxLength: 1024
                       minLength: 1
                       type: string
                     name:
                       description: |-
-                        Name is what attendees address — `fast`, `smart`. Never the provider's own
+                        Name is what attendees address, `fast`, `smart`. Never the provider's own
                         model name.
                       maxLength: 253
                       minLength: 1
@@ -163,6 +163,21 @@ spec:
                     - FailOpen
                     type: string
                 type: object
+              requestTimeout:
+                description: |-
+                  RequestTimeout is how long the gateway waits for a complete response from
+                  an upstream model.
+
+                  Exists for slow models rather than as a tuning knob. A reasoning model
+                  served locally by Ollama can take well over a minute for one reply, past
+                  agentgateway's own default, and the attendee sees `upstream call failed:
+                  connection closed before message completed`, which reads like a broken
+                  gateway, not a slow model.
+
+                  A Go duration string: "90s", "3m". Left unset, agentgateway's default
+                  applies, which is right for every hosted provider.
+                pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
+                type: string
             required:
             - models
             type: object

@@ -37,7 +37,7 @@ User "system:serviceaccount:educates:session-manager" cannot create resource
 ```
 
 And, by the same escalation rule as above, it cannot grant an attendee a Role to
-read their own session — a grantor must already hold what it grants:
+read their own session: a grantor must already hold what it grants:
 
 ```
 roles.rbac.authorization.k8s.io "...-agentgateway-reader" is forbidden:
@@ -52,7 +52,7 @@ the attendee gets no session at all.
 
 This chart therefore ships a ClusterRole labelled
 `rbac.educates.dev/extends-workshop-permissions: "true"`, which Educates
-aggregates into its session-manager — the same extension point kapp-controller
+aggregates into its session-manager: the same extension point kapp-controller
 and vcluster use. The grant is scoped to this operator's own kind; session-manager
 gets no say over platforms, catalogs, or the Secrets the operator mints.
 
@@ -101,6 +101,12 @@ spec:
   # service is unreachable, instead of letting it through unmetered.
   rateLimit:
     failureMode: FailClosed
+  # Optional. Unset means agentgateway's own default, which suits every hosted
+  # provider. Raise it for a slow local model: a reasoning model served by
+  # Ollama on a laptop can need minutes, and past the default the attendee sees
+  # `upstream call failed: connection closed before message completed` rather
+  # than a slow reply.
+  # requestTimeout: 180s
 ```
 
 The credential Secret is yours to create, in the gateway namespace
@@ -142,7 +148,7 @@ CRDs are in the chart's `crds/` directory, which Helm installs but never removes
 on uninstall. Delete them by hand if you want them gone.
 
 The Gateway API CRDs this chart installs when `gatewayAPI.install` is true are
-also left behind, by an explicit `helm.sh/resource-policy: keep` — removing
+also left behind, by an explicit `helm.sh/resource-policy: keep`, removing
 Gateway API from under an ingress controller that started using it would be
 worse than leaving two CRDs in place (ADR-0006). Delete them by hand only once
 nothing else on the cluster needs them.
