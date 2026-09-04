@@ -64,15 +64,21 @@ spec:
 # that Vertex AI is a separate provider here (`VertexAI`) using Google Cloud
 # credentials, not this one.
 #
+# Two Flash models rather than a Flash and a Pro: Pro is not served on the free
+# AI Studio tier at all, and asking for one fails with a 429 quota error naming
+# `limit: 0` rather than anything about billing. Check both names still work
+# before running a workshop — Google retires a model for new keys while still
+# listing it, and the failure is a 404 at the first request, mid-session.
+#
 #   - name: fast
 #     provider: Gemini
-#     model: gemini-2.5-flash
+#     model: gemini-3.6-flash
 #     credentialRef:
 #       name: agentgateway-provider-credentials
 #       key: api-key
 #   - name: smart
 #     provider: Gemini
-#     model: gemini-2.5-pro
+#     model: gemini-3.5-flash
 #     credentialRef:
 #       name: agentgateway-provider-credentials
 #       key: api-key
