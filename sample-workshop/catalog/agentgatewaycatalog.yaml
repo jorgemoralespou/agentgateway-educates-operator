@@ -59,6 +59,25 @@ spec:
 #       key: api-key
 #
 # ---
+# Google Gemini instead. Create the Secret with a key from
+# aistudio.google.com/apikey — an AI Studio key, which is a plain API key. Note
+# that Vertex AI is a separate provider here (`VertexAI`) using Google Cloud
+# credentials, not this one.
+#
+#   - name: fast
+#     provider: Gemini
+#     model: gemini-2.5-flash
+#     credentialRef:
+#       name: agentgateway-provider-credentials
+#       key: api-key
+#   - name: smart
+#     provider: Gemini
+#     model: gemini-2.5-pro
+#     credentialRef:
+#       name: agentgateway-provider-credentials
+#       key: api-key
+#
+# ---
 # Ollama, for a demo with no paid credential at all. Needs an Ollama reachable
 # from the cluster, and baseURL is required for this provider. The credential
 # Secret must still exist; its contents are ignored.
