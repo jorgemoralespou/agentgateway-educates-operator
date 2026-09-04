@@ -108,7 +108,7 @@ func (c *Client) Install(ctx context.Context, name string, chrt *Chart, vals map
 	install.SkipCRDs = c.skipCRDs
 
 	// Readiness is the reconciler's concern, never Helm's: the reconciler has
-	// to gate on things Helm cannot see anyway — a GatewayClass that appears
+	// to gate on things Helm cannot see anyway: a GatewayClass that appears
 	// only after leader election, a Gateway reporting Programmed. Blocking here
 	// would just move that wait somewhere it cannot be observed.
 	install.WaitStrategy = kube.HookOnlyStrategy

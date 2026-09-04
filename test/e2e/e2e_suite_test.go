@@ -2,9 +2,9 @@
 //
 // envtest is an API server with no controllers, and in particular **no garbage
 // collector**: owner references are recorded but cascading deletion never
-// happens. The property ADR-0002 rests on — a Secret placed in the workshop
+// happens. The property ADR-0002 rests on: a Secret placed in the workshop
 // namespace but owned by the session namespace is collected when the session
-// ends — would therefore go untested at the envtest seam no matter how it were
+// ends, would therefore go untested at the envtest seam no matter how it were
 // written.
 //
 // So exactly one test runs against a real cluster, and it is deliberately

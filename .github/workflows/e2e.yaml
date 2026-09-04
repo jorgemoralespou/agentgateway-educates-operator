@@ -4,7 +4,7 @@
 # platform, which is minutes rather than seconds. On main and on tags, where a
 # regression in cascading deletion would otherwise reach a release.
 #
-# The one assertion here is the one envtest cannot make — a real garbage
+# The one assertion here is the one envtest cannot make: a real garbage
 # collector following an owner reference across namespaces (ADR-0002).
 name: E2E
 

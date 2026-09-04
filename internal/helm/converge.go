@@ -122,7 +122,7 @@ func classify(live *release.Release, notFound bool, desiredFP string) decision {
 	}
 
 	// The ownership check comes before any convergence decision. A release
-	// somebody else owns must not be upgraded, repaired, or reinstalled — that
+	// somebody else owns must not be upgraded, repaired, or reinstalled, that
 	// is the collision the v4 installer does not guard against, where two
 	// operators sharing a release name revert each other forever.
 	if !IsOwned(live) {

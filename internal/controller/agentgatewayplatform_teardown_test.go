@@ -9,6 +9,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	crconfig "sigs.k8s.io/controller-runtime/pkg/config"
@@ -154,6 +155,95 @@ var _ = Describe("AgentGatewayPlatform teardown and provider switching", func() 
 			}, pollTimeout, pollInterval).Should(BeTrue())
 		})
 
+		// Models are the one kind here with no fixed name, so they are the one
+		// teardown could quietly skip. They also carry no ownerReferences, so
+		// nothing collects them: left behind, they outlive the Gateway they
+		// were parented to and a later platform in the same namespace inherits
+		// models from a catalog that may since have changed.
+		It("deletes the models the catalog rendered", func() {
+			createPlatformIn(namespace)
+			driveToReadyIn(namespace)
+
+			Eventually(func() metav1.ConditionStatus {
+				return conditionStatus(agentgatewayv1alpha1.ConditionReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			// A rendered pair, as the catalog controller would have written it.
+			for _, name := range []string{"fast", "fast-upstream"} {
+				model := newModel()
+				model.SetName(name)
+				model.SetNamespace(namespace)
+				model.SetLabels(map[string]string{ManagedByLabel: ManagedByValue})
+				Expect(unstructured.SetNestedMap(model.Object, map[string]any{
+					"parentRefs": []any{
+						map[string]any{
+							"group": GatewayAPIGroup,
+							"kind":  KindGateway,
+							"name":  GatewayName,
+						},
+					},
+					"provider":   "OpenAI",
+					"visibility": "Public",
+					"match":      map[string]any{"model": name},
+				}, "spec")).To(Succeed())
+				Expect(k8sClient.Create(ctx, model)).To(Succeed())
+			}
+
+			platform := getPlatform()
+			Expect(k8sClient.Delete(ctx, platform)).To(Succeed())
+
+			for _, name := range []string{"fast", "fast-upstream"} {
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx,
+						types.NamespacedName{Namespace: namespace, Name: name}, newModel())
+					return apierrors.IsNotFound(err)
+				}, pollTimeout, pollInterval).Should(BeTrue(),
+					"%s must not outlive the platform", name)
+			}
+		})
+
+		It("leaves a model it did not render", func() {
+			createPlatformIn(namespace)
+			driveToReadyIn(namespace)
+
+			Eventually(func() metav1.ConditionStatus {
+				return conditionStatus(agentgatewayv1alpha1.ConditionReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			// No managed-by label: a cluster operator's own.
+			foreign := newModel()
+			foreign.SetName("hand-written")
+			foreign.SetNamespace(namespace)
+			Expect(unstructured.SetNestedMap(foreign.Object, map[string]any{
+				"parentRefs": []any{
+					map[string]any{
+						"group": GatewayAPIGroup,
+						"kind":  KindGateway,
+						"name":  GatewayName,
+					},
+				},
+				"provider":   "OpenAI",
+				"visibility": "Public",
+				"match":      map[string]any{"model": "hand-written"},
+			}, "spec")).To(Succeed())
+			Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
+
+			platform := getPlatform()
+			Expect(k8sClient.Delete(ctx, platform)).To(Succeed())
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx,
+					types.NamespacedName{Name: agentgatewayv1alpha1.SingletonName},
+					&agentgatewayv1alpha1.AgentGatewayPlatform{})
+				return apierrors.IsNotFound(err)
+			}, pollTimeout, pollInterval).Should(BeTrue())
+
+			Expect(k8sClient.Get(ctx,
+				types.NamespacedName{Namespace: namespace, Name: "hand-written"},
+				newModel())).To(Succeed(),
+				"a model without this operator's managed-by label must survive teardown")
+		})
+
 		// Teardown is retried, so it must be safe to run against a cluster where
 		// some of it has already happened.
 		It("is idempotent: a drain with nothing left to remove still completes", func() {
@@ -236,7 +326,7 @@ var _ = Describe("AgentGatewayPlatform teardown and provider switching", func() 
 			Expect(k8sClient.Create(ctx, platform)).To(Succeed())
 
 			// It should be waiting on the referenced Gateway, which does not
-			// exist — and must never have installed anything of its own.
+			// exist, and must never have installed anything of its own.
 			Eventually(func() metav1.ConditionStatus {
 				return conditionStatus(agentgatewayv1alpha1.ConditionControlPlaneReady)
 			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
@@ -271,7 +361,7 @@ var _ = Describe("AgentGatewayPlatform teardown and provider switching", func() 
 	Describe("tolerating a partially dismantled cluster", func() {
 		// The Educates installer's teardown guard hardcodes the three platform
 		// component kinds and will not wait for this operator's resources, so
-		// cluster services — and the CRDs behind these kinds — can be removed
+		// cluster services, and the CRDs behind these kinds, can be removed
 		// while this operator is still draining.
 		It("completes teardown when the objects it would delete are already gone", func() {
 			createPlatformIn(namespace)

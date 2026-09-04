@@ -21,7 +21,7 @@ import (
 // `hour` is the window. The budget is documented as a ceiling for the session's
 // lifetime, and a workshop is shorter than that, so an hourly window is the
 // closest thing the rate-limit service offers to a lifetime cap. It does mean
-// an attendee in a session longer than an hour gets a fresh allowance — an
+// an attendee in a session longer than an hour gets a fresh allowance, an
 // acceptable trade for a disposable workshop cluster, and the TTL bounds the
 // key's life regardless.
 //
@@ -35,8 +35,8 @@ const tokenBudgetOverrideExpression = `has(apiKey.tokenBudget) ? ` +
 
 // ensurePolicy renders the single API-key policy.
 //
-// Exactly one policy, cluster-wide. API-key policies *replace* rather than merge
-// — two policies targeting one Gateway means one silently wins by creation
+// Exactly one policy, cluster-wide. API-key policies *replace* rather than
+// merge: two policies targeting one Gateway means one silently wins by creation
 // order, with no error surfaced, and attendees would lose access
 // non-deterministically (ADR-0002). That is why the name is a constant and
 // nothing here is per-workshop.
@@ -49,14 +49,16 @@ func (r *AgentGatewayPlatformReconciler) ensurePolicy(ctx context.Context, names
 	// A catalog that does not exist yet leaves the default in place; the catalog
 	// controller re-renders the policy when it becomes ready.
 	failureMode := agentgatewayv1alpha1.FailClosed
+	requestTimeout := ""
 	catalog := &agentgatewayv1alpha1.AgentGatewayCatalog{}
 	if err := r.Get(ctx, types.NamespacedName{Name: agentgatewayv1alpha1.SingletonName}, catalog); err == nil {
 		failureMode = catalog.FailureMode()
+		requestTimeout = catalog.Spec.RequestTimeout
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
 
-	spec := renderPolicySpec(failureMode, namespace)
+	spec := renderPolicySpec(failureMode, namespace, requestTimeout)
 
 	live := newPolicy()
 	err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: PolicyName}, live)
@@ -86,10 +88,10 @@ func (r *AgentGatewayPlatformReconciler) ensurePolicy(ctx context.Context, names
 // renderPolicySpec builds the policy that authenticates participant keys and
 // enforces token budgets.
 //
-// Split out as a pure function so the descriptor shape — the part that is easy
-// to get subtly wrong and expensive to debug on a cluster — is unit-testable.
-func renderPolicySpec(failureMode agentgatewayv1alpha1.RateLimitFailureMode, namespace string) map[string]any {
-	return map[string]any{
+// Split out as a pure function so the descriptor shape: the part that is easy
+// to get subtly wrong and expensive to debug on a cluster, is unit-testable.
+func renderPolicySpec(failureMode agentgatewayv1alpha1.RateLimitFailureMode, namespace, requestTimeout string) map[string]any {
+	spec := map[string]any{
 		// targetRefs has no namespace field: the target must be in the policy's
 		// own namespace. That restriction is the whole reason registrations
 		// cannot live beside the attendee's pod (ADR-0002).
@@ -118,7 +120,7 @@ func renderPolicySpec(failureMode agentgatewayv1alpha1.RateLimitFailureMode, nam
 			"rateLimit": map[string]any{
 				"global": map[string]any{
 					"domain": RateLimitDomain,
-					// backendRef *does* take a namespace — the cross-namespace
+					// backendRef *does* take a namespace: the cross-namespace
 					// restriction is specific to the credential selector.
 					"backendRef": map[string]any{
 						"group":     "",
@@ -165,4 +167,16 @@ func renderPolicySpec(failureMode agentgatewayv1alpha1.RateLimitFailureMode, nam
 			},
 		},
 	}
+
+	// Only when asked for. Writing agentgateway's own default back at it would
+	// pin a value this operator has no opinion about, and would need changing
+	// every time that default moved.
+	if requestTimeout != "" {
+		traffic, _ := spec["traffic"].(map[string]any)
+		traffic["timeouts"] = map[string]any{
+			"request": requestTimeout,
+		}
+	}
+
+	return spec
 }

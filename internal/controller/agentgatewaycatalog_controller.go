@@ -26,7 +26,7 @@ import (
 
 // AgentGatewayCatalogReconciler renders the models the Gateway offers.
 //
-// Configures a Gateway; never installs one — it waits for the platform
+// Configures a Gateway; never installs one: it waits for the platform
 // declaration to be ready and reads the gateway address from its status rather
 // than reconstructing it.
 type AgentGatewayCatalogReconciler struct {
@@ -90,7 +90,7 @@ func (r *AgentGatewayCatalogReconciler) Reconcile(ctx context.Context, req ctrl.
 
 	// agentgateway's CRDs are installed by the platform, so they may still be
 	// missing on a reconcile that races ahead. A fresh discovery probe tells
-	// "absent" apart from "stale mapper" — and without resetting the mapper,
+	// "absent" apart from "stale mapper", and without resetting the mapper,
 	// every typed call to those kinds would fail until the pod restarted.
 	present, err := r.customResourceKindsPresent(ctx)
 	if err != nil {
@@ -149,6 +149,53 @@ func (r *AgentGatewayCatalogReconciler) renderModels(ctx context.Context, catalo
 		if err := r.ensureAliasModel(ctx, catalog, namespace, model); err != nil {
 			return fmt.Errorf("render alias for %q: %w", model.Name, err)
 		}
+	}
+	return r.pruneModels(ctx, catalog, namespace)
+}
+
+// pruneModels deletes rendered models whose catalog entry has gone.
+//
+// Rendering alone is not convergence. Dropping a model from the catalog left
+// its pair behind, still parented to the Gateway and still Public, so an
+// attendee could go on addressing a model the catalog no longer lists, and go
+// on spending against the credential behind it. Editing an entry's provider or
+// upstream model is safe without this, since both objects keep the catalog
+// name; it is removal and rename that strand them.
+//
+// Scoped by this operator's managed-by label, so a model a cluster operator
+// wrote by hand in the gateway namespace is left alone. The catalog is a
+// CRD-enforced singleton, so there is no sibling catalog whose models could be
+// caught by the same label.
+func (r *AgentGatewayCatalogReconciler) pruneModels(ctx context.Context, catalog *agentgatewayv1alpha1.AgentGatewayCatalog, namespace string) error {
+	log := logf.FromContext(ctx)
+
+	expected := make(map[string]struct{}, len(catalog.Spec.Models)*2)
+	for _, model := range catalog.Spec.Models {
+		expected[model.Name] = struct{}{}
+		expected[internalModelName(model.Name)] = struct{}{}
+	}
+
+	models := newModelList()
+	if err := r.List(ctx, models,
+		client.InNamespace(namespace),
+		client.MatchingLabels{ManagedByLabel: ManagedByValue},
+	); err != nil {
+		if meta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+
+	for i := range models.Items {
+		live := &models.Items[i]
+		if _, keep := expected[live.GetName()]; keep {
+			continue
+		}
+
+		if err := r.Delete(ctx, live); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("prune model %q: %w", live.GetName(), err)
+		}
+		log.V(1).Info("pruned a model no longer in the catalog", "model", live.GetName())
 	}
 	return nil
 }
@@ -215,7 +262,7 @@ func (r *AgentGatewayCatalogReconciler) ensureAliasModel(ctx context.Context, ca
 		// A virtual model must be Public; agentgateway's CEL rejects Internal.
 		"visibility": "Public",
 		"match": map[string]any{
-			// The catalog name, exactly — a virtual model's match must not
+			// The catalog name, exactly: a virtual model's match must not
 			// contain a wildcard.
 			"model": model.Name,
 		},
@@ -343,7 +390,7 @@ func (r *AgentGatewayCatalogReconciler) SetupWithManager(mgr ctrl.Manager) error
 		For(&agentgatewayv1alpha1.AgentGatewayCatalog{},
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// The catalog gates on the platform, so a platform that becomes ready
-		// has to wake it — otherwise the catalog waits for its requeue.
+		// has to wake it, otherwise the catalog waits for its requeue.
 		Watches(&agentgatewayv1alpha1.AgentGatewayPlatform{},
 			handler.EnqueueRequestsFromMapFunc(mapPlatformToCatalog)).
 		Named("agentgatewaycatalog").
@@ -352,8 +399,8 @@ func (r *AgentGatewayCatalogReconciler) SetupWithManager(mgr ctrl.Manager) error
 
 // mapCatalogToPlatform wakes the platform when the catalog changes.
 //
-// The API-key policy is rendered by the platform controller — it must be
-// exactly one object, in the namespace the platform owns — but its failureMode
+// The API-key policy is rendered by the platform controller: it must be
+// exactly one object, in the namespace the platform owns, but its failureMode
 // is a catalog setting. Without this, changing the failure mode would sit unread
 // until the next platform reconcile.
 func mapCatalogToPlatform(_ context.Context, _ client.Object) []reconcile.Request {

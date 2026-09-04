@@ -54,7 +54,7 @@ func SetupWithManager(mgr ctrl.Manager, helmClientFor HelmClientFactory, operato
 
 	// The TTL backstop. Enforced here rather than at the gateway because
 	// agentgateway 1.5.0's CEL has no current-time function to compare an
-	// expiry against — see agentgatewaysession_expiry.go.
+	// expiry against, see agentgatewaysession_expiry.go.
 	if err := (&ExpirySweeper{
 		Client:              mgr.GetClient(),
 		GatewayNamespaceFor: gatewayNamespaceFromPlatform(mgr.GetClient()),

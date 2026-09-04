@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -275,6 +276,106 @@ var _ = Describe("AgentGatewayCatalog reconciler", func() {
 			}, alias)).To(Succeed())
 			aliasMatch, _, _ := unstructured.NestedString(alias.Object, "spec", "match", "model")
 			Expect(aliasMatch).To(Equal("fast"))
+		})
+	})
+
+	Describe("removing a model from the catalog", func() {
+		BeforeEach(func() {
+			createReadyPlatform()
+		})
+
+		// Rendering alone is not convergence. A model dropped from the catalog
+		// used to keep its rendered pair, still parented to the Gateway and
+		// still Public, so an attendee could go on addressing a name the
+		// catalog no longer lists, and go on spending against the credential
+		// behind it.
+		It("deletes the rendered pair, so a withdrawn model stops being addressable", func() {
+			second := defaultCatalogModel()
+			second.Name = "smart"
+			second.Model = "gpt-4o"
+			createCatalogWithModels(defaultCatalogModel(), second)
+
+			for _, name := range []string{"fast", "fast-upstream", "smart", "smart-upstream"} {
+				Eventually(func() error {
+					return k8sClient.Get(ctx, types.NamespacedName{
+						Namespace: testGatewayNamespace, Name: name,
+					}, newModel())
+				}, pollTimeout, pollInterval).Should(Succeed())
+			}
+
+			// The cluster operator withdraws `smart`.
+			live := getCatalog()
+			live.Spec.Models = []agentgatewayv1alpha1.CatalogModel{defaultCatalogModel()}
+			Expect(k8sClient.Update(ctx, live)).To(Succeed())
+
+			for _, name := range []string{"smart", "smart-upstream"} {
+				Eventually(func() bool {
+					err := k8sClient.Get(ctx, types.NamespacedName{
+						Namespace: testGatewayNamespace, Name: name,
+					}, newModel())
+					return apierrors.IsNotFound(err)
+				}, pollTimeout, pollInterval).Should(BeTrue(),
+					"%s must be pruned once its catalog entry is gone", name)
+			}
+
+			// The surviving model is untouched.
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: testGatewayNamespace, Name: "fast",
+			}, newModel())).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: testGatewayNamespace, Name: "fast-upstream",
+			}, newModel())).To(Succeed())
+		})
+
+		It("leaves a model it did not render, which may be a cluster operator's own", func() {
+			createCatalog()
+
+			Eventually(func() metav1.ConditionStatus {
+				return catalogCondition(agentgatewayv1alpha1.ConditionReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			// A model in the gateway namespace that this operator never wrote:
+			// no managed-by label, and a name no catalog entry implies.
+			foreign := newModel()
+			foreign.SetName("hand-written")
+			foreign.SetNamespace(testGatewayNamespace)
+			Expect(unstructured.SetNestedMap(foreign.Object, map[string]any{
+				// parentRefs is required by agentgateway's own CRD validation.
+				"parentRefs": []any{
+					map[string]any{
+						"group": GatewayAPIGroup,
+						"kind":  KindGateway,
+						"name":  GatewayName,
+					},
+				},
+				"provider":   "OpenAI",
+				"visibility": "Public",
+				"match":      map[string]any{"model": "hand-written"},
+			}, "spec")).To(Succeed())
+			Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
+
+			// Force a reconcile that runs the prune.
+			live := getCatalog()
+			live.Spec.Models[0].Model = "gpt-4o"
+			Expect(k8sClient.Update(ctx, live)).To(Succeed())
+
+			Eventually(func() string {
+				internal := newModel()
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: testGatewayNamespace, Name: "fast-upstream",
+				}, internal); err != nil {
+					return ""
+				}
+				upstream, _, _ := unstructured.NestedString(internal.Object, "spec", "match", "model")
+				return upstream
+			}, pollTimeout, pollInterval).Should(Equal("gpt-4o"))
+
+			Consistently(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: testGatewayNamespace, Name: "hand-written",
+				}, newModel())
+			}, "2s", pollInterval).Should(Succeed(),
+				"a model without this operator's managed-by label must survive")
 		})
 	})
 })

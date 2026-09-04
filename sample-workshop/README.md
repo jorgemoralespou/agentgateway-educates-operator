@@ -23,14 +23,14 @@ only `workshop.yaml` and `trainingportal.yaml`.
 
 ## The pages
 
-1. **Your LLM key** — the environment variables are already set; `curl` the
+1. **Your LLM key**: the environment variables are already set; `curl` the
    gateway and get a completion.
-2. **Where your key came from** — the resource the author wrote, the grant and
+2. **Where your key came from**: the resource the author wrote, the grant and
    Secret the operator produced, and the hash-only registration on the gateway
    side.
-3. **Your budget is yours alone** — exhaust a deliberately small budget, watch
+3. **Your budget is yours alone**, exhaust a deliberately small budget, watch
    the 429s, confirm a neighbour is unaffected.
-4. **When your session ends** — the owner reference, the finalizer and the TTL
+4. **When your session ends**: the owner reference, the finalizer and the TTL
    that revoke the key.
 
 ## Prerequisites
@@ -63,7 +63,7 @@ default Educates session role does not cover custom resources, so
 fails with permission errors.
 
 Both live in the **workshop** namespace, and the `RoleBinding` subject uses
-`$(workshop_namespace)` — that is where the session's service account is, not
+`$(workshop_namespace)`: that is where the session's service account is, not
 the session namespace.
 
 ## Publishing
@@ -71,6 +71,6 @@ the session namespace.
 CI publishes this on every push to `main` that touches `sample-workshop/`,
 using `educates/educates-github-actions/publish-workshop`. The image lands at
 `ghcr.io/<owner>/lab-agentgateway-sample-files` under a single moving tag
-(`main`, which is what the action derives from the branch ref — it offers no
+(`main`, which is what the action derives from the branch ref: it offers no
 way to name it `latest`). The workshop is not versioned alongside operator
 releases: it tracks `main` so it always demonstrates current behaviour.

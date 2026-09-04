@@ -9,7 +9,7 @@ import (
 // the status has not changed.
 //
 // meta.SetStatusCondition does this correctly, so this only exists to supply
-// ObservedGeneration consistently — a condition without it cannot be
+// ObservedGeneration consistently: a condition without it cannot be
 // distinguished from a stale one.
 func setCondition(conditions *[]metav1.Condition, generation int64, condType string, status metav1.ConditionStatus, reason, message string) {
 	meta.SetStatusCondition(conditions, metav1.Condition{

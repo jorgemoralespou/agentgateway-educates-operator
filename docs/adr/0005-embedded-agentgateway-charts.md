@@ -13,7 +13,7 @@ out participant keys. Three ways to do that were available.
 
 **Require it as a prerequisite.** The cluster operator installs agentgateway
 themselves and this operator only uses it. Simple, but it makes the common case
-— a workshop cluster with nothing on it — a multi-step manual setup, and leaves
+- a workshop cluster with nothing on it, a multi-step manual setup, and leaves
 this operator unable to say anything useful when the version it finds is one it
 has never been tested against.
 
@@ -25,7 +25,7 @@ version installed depends on when reconcile happened to run.
 **Embed the charts in the operator image.** The version is fixed at build time
 and travels with the binary. This is the stance the Educates v4 installer
 takes, which installs a hard-coded list of embedded charts and offers no
-third-party extension point — the reason this operator is a peer of that
+third-party extension point: the reason this operator is a peer of that
 installer rather than a plugin to it.
 
 The charts come from `ghcr.io/agentgateway/charts`. An earlier draft of this
@@ -68,7 +68,7 @@ creates after leader election, and never creates it itself. A ready Deployment
 is therefore not sufficient to proceed on.
 
 Readiness gates on the Gateway reporting `Programmed` and its data-plane
-Deployment being available — never on the Gateway's addresses. A workshop
+Deployment being available, never on the Gateway's addresses. A workshop
 cluster with no load balancer provider produces a Gateway that is working and
 addressless, and gating on addresses would call that broken.
 
@@ -85,7 +85,7 @@ without it two operators sharing a release name fight in an upgrade loop, each
 reverting the other.
 
 Teardown drains rather than orphans. Switching the provider to external
-uninstalls the bundled release instead of leaving it running — the bug in v4's
+uninstalls the bundled release instead of leaving it running: the bug in v4's
 cluster-services path that its platform-extras path does not have. Draining
 tolerates kinds disappearing underneath it, because `EducatesClusterConfig`'s
 teardown guard hardcodes the three platform component kinds and will not wait

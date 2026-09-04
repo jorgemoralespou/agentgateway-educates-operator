@@ -39,13 +39,26 @@ spec:
     objects:
       # Attendees inspect their own grant and Secret on pages 2 and 4. The
       # default session role covers only the core, apps, batch and networking
-      # groups, so reading a custom resource needs an explicit grant — without
+      # groups, so reading a custom resource needs an explicit grant, without
       # this, every kubectl command in the content fails with a forbidden error.
       #
       # Both objects go in the workshop namespace because that is where the
       # session's service account lives and where the operator places the
       # Secret. The subject namespace below is $(workshop_namespace) for the
       # same reason; $(session_namespace) is the common mistake here.
+      #
+      # This Role requires the operator's chart to be installed with
+      # `educates.extendSessionManagerPermissions` (the default). Kubernetes
+      # forbids granting permissions the creator does not hold, and Educates'
+      # session-manager creates this object, so without the ClusterRole that
+      # chart aggregates into session-manager the whole WorkshopSession fails:
+      #
+      #   ...-agentgateway-reader is forbidden: user
+      #   "system:serviceaccount:educates:session-manager" is attempting to
+      #   grant RBAC permissions not currently held
+      #
+      # Drop this Role and the RoleBinding if the workshop content does not
+      # need attendees to read their own grant.
       - apiVersion: rbac.authorization.k8s.io/v1
         kind: Role
         metadata:

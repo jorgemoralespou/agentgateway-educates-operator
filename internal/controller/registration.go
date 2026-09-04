@@ -11,8 +11,8 @@ import (
 //
 // The shape is agentgateway's, not ours: each `data` entry holds JSON with a
 // keyHash and arbitrary metadata. A raw key is rejected outright when sourced
-// from a ConfigMap — the controller errors with "keys sourced from a ConfigMap
-// must use keyHash, not a raw key, since ConfigMaps are not confidential" —
+// from a ConfigMap: the controller errors with "keys sourced from a ConfigMap
+// must use keyHash, not a raw key, since ConfigMaps are not confidential",
 // which is exactly the constraint that makes this registration honestly a
 // ConfigMap rather than a Secret (ADR-0004).
 type registrationEntry struct {
@@ -51,7 +51,7 @@ const metadataKeyTokenBudget = "tokenBudget"
 //
 // Enforcement therefore lives in the operator, which does have a clock: see
 // the expiry sweep in agentgatewaysession_expiry.go. The value is written here
-// so that a human — or an out-of-band sweep — reading an orphaned registration
+// so that a human, or an out-of-band sweep, reading an orphaned registration
 // can tell whether it is still live, and so enforcement can move to the gateway
 // unchanged if agentgateway ever binds a time function.
 const metadataKeyExpiresAt = "expiresAt"

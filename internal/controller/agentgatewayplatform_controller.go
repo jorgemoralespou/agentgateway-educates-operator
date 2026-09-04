@@ -35,7 +35,7 @@ import (
 const PlatformFinalizer = "agentgatewayplatform.agentgateway.operators.educates.dev/finalizer"
 
 // requeueShort is how long to wait before looking again at something that is
-// merely not ready yet — a chart still rolling out, a GatewayClass not yet
+// merely not ready yet: a chart still rolling out, a GatewayClass not yet
 // created by agentgateway's controller.
 const requeueShort = 15 * time.Second
 
@@ -57,7 +57,7 @@ type AgentGatewayPlatformReconciler struct {
 
 // The operator installs agentgateway's charts, which ship their own RBAC.
 // Kubernetes forbids creating a role granting permissions the creator lacks, so
-// this operator needs bind and escalate on ClusterRoles — approximately
+// this operator needs bind and escalate on ClusterRoles, approximately
 // cluster-admin equivalent, and stated plainly in the chart's README (ADR-0005).
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;roles;rolebindings,verbs=get;list;watch;create;update;patch;delete;bind;escalate
 // +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch;delete
@@ -107,7 +107,7 @@ func (r *AgentGatewayPlatformReconciler) Reconcile(ctx context.Context, req ctrl
 	log.V(1).Info("reconciling platform", "provider", platform.Spec.Provider)
 
 	// An external gateway installs nothing. The operator configures what is
-	// already there and, critically, drains anything it installed previously —
+	// already there and, critically, drains anything it installed previously,
 	// switching away from bundled must not orphan the release.
 	if platform.Spec.Provider == agentgatewayv1alpha1.ProviderExternal {
 		return r.reconcileExternal(ctx, platform)
@@ -161,7 +161,7 @@ func (r *AgentGatewayPlatformReconciler) reconcileBundled(ctx context.Context, p
 
 	// Step 5: wait for the GatewayClass. agentgateway's own controller creates
 	// it after leader election, so a ready Deployment is necessary but not
-	// sufficient — and this operator must never create it itself.
+	// sufficient, and this operator must never create it itself.
 	if done, res, err := r.waitForGatewayClass(ctx, platform); !done {
 		return res, err
 	}

@@ -2,7 +2,7 @@ package v1alpha1
 
 // Conditions are authoritative; the Phase enums below are advisory summaries
 // for humans reading `kubectl get`. This matches the v4 installer operator, and
-// is deliberately not the status.educates.* nesting the Python components use —
+// is deliberately not the status.educates.* nesting the Python components use,
 // that is a kopf artefact.
 
 // Condition types set by the AgentGatewayPlatform controller.

@@ -36,3 +36,19 @@ leaderElection:
 # platform declaration to match.
 gatewayAPI:
   install: true
+
+educates:
+  # -- Let Educates' session-manager manage AgentGatewaySessions, by
+  # aggregating a ClusterRole into it.
+  #
+  # Required for any workshop that uses this operator. session-manager creates
+  # the objects in a workshop's `session.objects`, and holds no permissions on
+  # this operator's API group by default, so without this it can neither create
+  # an attendee's AgentGatewaySession nor grant them a Role to read it. Either
+  # failure fails the whole WorkshopSession, and the attendee gets no session.
+  #
+  # Defaults on: the grant is scoped to this operator's own kind, and it is
+  # inert on a cluster with no Educates, where nothing aggregates the label. Set
+  # false to keep the operator from creating cluster-scoped RBAC at all, then
+  # only `provider: ExternalAgentgateway` with hand-managed sessions works.
+  extendSessionManagerPermissions: true

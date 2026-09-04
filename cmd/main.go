@@ -116,7 +116,7 @@ func main() {
 		// Secrets are cached per-namespace rather than cluster-wide. The
 		// operator reads provider credentials and writes participant keys, so
 		// an unscoped Secret cache would hold every Secret in the cluster in
-		// memory — including those of every workshop it has nothing to do with.
+		// memory, including those of every workshop it has nothing to do with.
 		Cache: cache.Options{
 			ByObject: map[client.Object]cache.ByObject{
 				&corev1.Secret{}: {},

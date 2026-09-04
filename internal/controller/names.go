@@ -28,7 +28,26 @@ const (
 
 	// GatewayName is the Gateway this operator creates. Creating it is what
 	// causes agentgateway to provision data-plane pods.
-	GatewayName = "agentgateway"
+	//
+	// Deliberately not "agentgateway": agentgateway names the data-plane
+	// Deployment, Service and ServiceAccount after the Gateway, verbatim and in
+	// the Gateway's own namespace. A Gateway called "agentgateway" in
+	// agentgateway-system therefore collides head-on with the control-plane
+	// objects of the "agentgateway" Helm release this operator installs into
+	// that same namespace. The collision is unrecoverable rather than merely
+	// untidy: a Deployment's spec.selector is immutable, the two selectors
+	// differ, and the data plane retries the rejected apply forever while the
+	// Gateway sits at Programmed=False.
+	GatewayName = "agentgateway-educates"
+
+	// LegacyGatewayName is the name GatewayName used to have, removed on sight.
+	//
+	// A cluster that ran an earlier build still has this Gateway, wedged at
+	// Programmed=False by the collision described above, and it does not heal
+	// on its own: the rename leaves it behind rather than renaming it in
+	// place. See pruneLegacyGateway, which only ever deletes one carrying this
+	// operator's own managed-by label.
+	LegacyGatewayName = "agentgateway"
 
 	// GatewayListenerName is the name of the Gateway's only listener.
 	GatewayListenerName = "llm"
@@ -72,6 +91,11 @@ const (
 
 	KindGateway      = "Gateway"
 	KindGatewayClass = "GatewayClass"
+
+	// KindHTTPRoute is named only in the listener's allowedRoutes, to preserve
+	// a default that setting allowedRoutes.kinds would otherwise revoke. This
+	// operator creates no HTTPRoute, models attach to the listener directly.
+	KindHTTPRoute = "HTTPRoute"
 )
 
 // ManagedByLabel marks every object this operator creates, so a cluster

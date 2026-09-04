@@ -1,7 +1,7 @@
 # The model catalog the kind e2e runs against.
 #
-# The teardown test never makes an upstream call — it asserts on cascading
-# deletion — so the credential this references is a placeholder. The catalog
+# The teardown test never makes an upstream call: it asserts on cascading
+# deletion, so the credential this references is a placeholder. The catalog
 # only has to render its models and become ready, which needs a Secret to
 # exist, not a working key.
 apiVersion: agentgateway.operators.educates.dev/v1alpha1

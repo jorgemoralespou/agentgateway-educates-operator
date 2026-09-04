@@ -41,7 +41,7 @@ That is all. No key management, no per-attendee provisioning, no cleanup code.
 
 `namespace: $(workshop_namespace)` is easy to overlook and load-bearing. Your
 pod runs in the workshop namespace, and a `secretKeyRef` only resolves within
-its own namespace — so a Secret created anywhere else would be invisible to
+its own namespace, so a Secret created anywhere else would be invisible to
 you. Omit that line and the operator refuses the grant with a `PlacementValid`
 condition explaining why, rather than leaving you with a pod stuck in
 `CreateContainerConfigError`.
@@ -63,14 +63,14 @@ kubectl get agentgatewaysession "$SESSION_NAME" -n "$WORKSHOP_NAMESPACE" \
   -o jsonpath='{.status.phase}{"\n"}{.status.secretRef.name}{"\n"}{.status.gatewayURL}{"\n"}'
 ```
 
-And the Secret it produced — the keys, not the values:
+And the Secret it produced: the keys, not the values:
 
 ```execute
 kubectl get secret "$SESSION_NAME-agentgateway" -n "$WORKSHOP_NAMESPACE" \
-  -o jsonpath='{range $k, $v := .data}{$k}{"\n"}{end}'
+  -o go-template='{{range $k, $v := .data}}{{$k}}{{"\n"}}{{end}}'
 ```
 
-Two keys: `api-key` and `base-url` — exactly the two environment variables you
+Two keys: `api-key` and `base-url`, exactly the two environment variables you
 used on the previous page.
 
 ## The half you cannot see
@@ -86,7 +86,7 @@ data:
 ```
 
 The gateway authenticates you by hashing what you send and comparing. Nothing
-on the gateway side can reproduce your key — which is why that object is an
+on the gateway side can reproduce your key, which is why that object is an
 ordinary ConfigMap rather than a Secret, and why it is safe for it to outlive
 the moment of creation.
 

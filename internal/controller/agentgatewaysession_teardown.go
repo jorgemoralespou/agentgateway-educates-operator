@@ -77,8 +77,8 @@ func (r *AgentGatewaySessionReconciler) reconcileDelete(ctx context.Context, ses
 	}
 
 	// The window has expired. Log loudly and let deletion proceed: what leaks
-	// is a SHA-256 hash, not a credential — the plaintext died with the
-	// workshop namespace — and every key carries a TTL that closes even that
+	// is a SHA-256 hash, not a credential: the plaintext died with the
+	// workshop namespace, and every key carries a TTL that closes even that
 	// window.
 	log.Error(removeErr,
 		"GIVING UP on removing a key registration after the bounded retry window; "+

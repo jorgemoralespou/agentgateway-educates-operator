@@ -23,7 +23,7 @@ import (
 // infrastructure with no per-workshop variation, and vendoring two more charts
 // to express four objects would be more machinery than the problem needs.
 //
-// The counter store runs without persistence — no PVC, no volume. Counters
+// The counter store runs without persistence: no PVC, no volume. Counters
 // reset on restart, which resets budgets. That is deliberate and acceptable for
 // a disposable workshop cluster, and it keeps the "no long-term persistence"
 // constraint ADR-0001 exists to protect (ADR-0003).
@@ -34,6 +34,12 @@ const (
 
 	redisName = "agentgateway-ratelimit-redis"
 	redisPort = 6379
+
+	// redisUID and redisGID are the redis user and group redis:7-alpine
+	// creates. They are stated here because the image does not declare a
+	// default USER, so the pod has to name one, see ensureRedis.
+	redisUID = 999
+	redisGID = 1000
 
 	// ratelimitConfigMapName holds the rate-limit service's domain
 	// configuration.
@@ -58,17 +64,26 @@ func (r *AgentGatewayPlatformReconciler) reconcileRateLimit(ctx context.Context,
 		}
 	}
 
-	available, err := r.deploymentAvailable(ctx, namespace, RateLimitServiceName)
-	if err != nil {
-		return false, ctrl.Result{}, err
-	}
-	if !available {
-		setCondition(&platform.Status.Conditions, platform.Generation,
-			agentgatewayv1alpha1.ConditionRateLimitReady, metav1.ConditionFalse,
-			agentgatewayv1alpha1.ReasonWaiting,
-			"waiting for the rate-limit service Deployment to become available")
-		platform.Status.Phase = agentgatewayv1alpha1.PlatformInstalling
-		return false, ctrl.Result{RequeueAfter: requeueShort}, r.updateStatus(ctx, platform)
+	// Both Deployments, not just the rate-limit service. The service starts and
+	// reports Available with no counter store reachable: it retries redis in
+	// the background and answers checks meanwhile, so gating on it alone let
+	// the platform report Ready while the store was dead, which is what
+	// ConditionRateLimitReady exists to rule out. Token budgets are not
+	// enforceable without the store, and a workshop that believes it has a
+	// budget when it does not is worse than one that waits.
+	for _, name := range []string{redisName, RateLimitServiceName} {
+		available, err := r.deploymentAvailable(ctx, namespace, name)
+		if err != nil {
+			return false, ctrl.Result{}, err
+		}
+		if !available {
+			setCondition(&platform.Status.Conditions, platform.Generation,
+				agentgatewayv1alpha1.ConditionRateLimitReady, metav1.ConditionFalse,
+				agentgatewayv1alpha1.ReasonWaiting,
+				fmt.Sprintf("waiting for the %s Deployment to become available", name))
+			platform.Status.Phase = agentgatewayv1alpha1.PlatformInstalling
+			return false, ctrl.Result{RequeueAfter: requeueShort}, r.updateStatus(ctx, platform)
+		}
 	}
 
 	setCondition(&platform.Status.Conditions, platform.Generation,
@@ -83,8 +98,8 @@ func (r *AgentGatewayPlatformReconciler) reconcileRateLimit(ctx context.Context,
 // domain and the descriptor key, and this file declares that the key exists.
 //
 // The value below is only a fallback. A shared config file cannot hold a row
-// per attendee — that is exactly the contention the one-registration-per-session
-// design avoids — so the real per-session ceiling travels on each key's own
+// per attendee: that is exactly the contention the one-registration-per-session
+// design avoids, so the real per-session ceiling travels on each key's own
 // registration and reaches the service through the policy's limitOverride
 // (ADR-0003). This entry applies only to a request whose registration carries no
 // budget, which should not happen, and is deliberately equal to the default
@@ -133,6 +148,28 @@ func (r *AgentGatewayPlatformReconciler) ensureRedis(ctx context.Context, platfo
 				Spec: corev1.PodSpec{
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot: ptrTo(true),
+						// RunAsUser is mandatory here, unlike on the ratelimit
+						// Deployment below. RunAsNonRoot alone makes the kubelet
+						// check the image's declared user, and redis:7-alpine
+						// declares none: its Dockerfile has no USER line, so it
+						// defaults to root. The kubelet cannot prove the
+						// container will not be root and refuses to start it at
+						// all, with CreateContainerConfigError:
+						//
+						//   container has runAsNonRoot and image will run as root
+						//
+						// That is a permanent config error, not a crash loop: it
+						// never resolves on retry. envoyproxy/ratelimit declares
+						// USER 65532, which is why the same pod-level context
+						// works there and only this one needs a UID.
+						//
+						// 999 is the redis user the image itself creates; the
+						// group is 1000. Nothing is written to disk (there is no
+						// volume at all, by design, ADR-0003) so the UID only
+						// has to be non-root and to own nothing.
+						RunAsUser:  ptrTo(int64(redisUID)),
+						RunAsGroup: ptrTo(int64(redisGID)),
+						FSGroup:    ptrTo(int64(redisGID)),
 					},
 					Containers: []corev1.Container{{
 						Name:  "redis",

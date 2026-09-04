@@ -41,5 +41,5 @@ name:
 
 A workshop author then adds one resource to session.objects and two environment
 variables to session.env. The AgentGatewaySession MUST carry
-`namespace: $(workshop_namespace)` — without it the attendee's pod cannot read
+`namespace: $(workshop_namespace)`, without it the attendee's pod cannot read
 the Secret it creates.

@@ -68,7 +68,7 @@ func TestRenderRegistrationNormalisesTheExpiryToUTC(t *testing.T) {
 }
 
 // The registration is a ConfigMap, which is not confidential. It must never
-// carry key material — that asymmetry is what makes the ADR-0002 leak
+// carry key material: that asymmetry is what makes the ADR-0002 leak
 // tolerable.
 func TestRenderRegistrationCarriesNoKeyMaterial(t *testing.T) {
 	const key = "sk-thisIsTheActualParticipantKey"

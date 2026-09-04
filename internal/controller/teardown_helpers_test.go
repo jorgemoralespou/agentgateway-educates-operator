@@ -63,12 +63,16 @@ func driveToReadyIn(namespace string) {
 	markGatewayProgrammed(namespace, GatewayName)
 	markDeploymentAvailable(namespace, GatewayName)
 
-	Eventually(func() error {
-		return k8sClient.Get(ctx, types.NamespacedName{
-			Namespace: namespace, Name: RateLimitServiceName,
-		}, &appsv1.Deployment{})
-	}, pollTimeout, pollInterval).Should(Succeed())
-	markDeploymentAvailable(namespace, RateLimitServiceName)
+	// Both rate-limit Deployments: readiness gates on the counter store as well
+	// as the service, since the service comes up Available with no store.
+	for _, name := range []string{redisName, RateLimitServiceName} {
+		Eventually(func() error {
+			return k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: namespace, Name: name,
+			}, &appsv1.Deployment{})
+		}, pollTimeout, pollInterval).Should(Succeed())
+		markDeploymentAvailable(namespace, name)
+	}
 }
 
 // cleanupGatewayObjectsIn is cleanupGatewayObjects for a given namespace.

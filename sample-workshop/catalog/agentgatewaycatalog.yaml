@@ -7,31 +7,53 @@
 #
 # Apply it with `make deploy-sample-catalog`, which first checks the credential
 # Secret below exists. Nothing in this repository creates that Secret: a
-# provider API key is yours to supply.
+# provider API key is yours to supply. The Secret is required even for Ollama,
+# which needs no credential, only its existence is checked, not its contents,
+# so any value does for a local model:
 #
 #   kubectl create secret generic agentgateway-provider-credentials \
 #     --namespace agentgateway-system \
-#     --from-literal=api-key=sk-ant-...
+#     --from-literal=api-key=unused-by-ollama
 #
-# The `name` of each model is what attendees address — `fast`, `smart`. The
+# The `name` of each model is what attendees address, `fast`, `smart`. The
 # provider's own model name is never exposed to them, so switching provider
 # below leaves the workshop content untouched.
+#
+# Ollama is the default here because it needs no account and no spending. The
+# hosted providers are below, commented; each expects its own key in that same
+# Secret.
 apiVersion: agentgateway.operators.educates.dev/v1alpha1
 kind: AgentGatewayCatalog
 metadata:
   name: cluster
 spec:
   models:
+    # Ollama, so the workshop runs with no paid credential and no data leaving
+    # the network. baseURL is required for this provider and points at wherever
+    # Ollama actually runs: it must resolve from *inside* the cluster, not just
+    # from your laptop. Pull the model first with `ollama pull llama3.2`.
     - name: fast
-      provider: Anthropic
-      model: claude-haiku-4-5-20251001
+      provider: Ollama
+      model: llama3.2:latest
+      baseURL: http://ollama.educates.test:11434
       credentialRef:
         name: agentgateway-provider-credentials
         key: api-key
 
+    # Deliberately the same model as `fast` here. Two names that resolve to one
+    # model is a perfectly good demonstration: the point of the aliases is that
+    # attendees address `fast` and `smart` and never learn what is behind them,
+    # so the binding can change without touching workshop content.
+    #
+    # Prefer a small model for the second name too. A reasoning model such as
+    # deepseek-r1:8b takes over a minute per reply on a laptop, which exceeds
+    # agentgateway's request timeout: the attendee sees `upstream call failed:
+    # connection closed before message completed`, not a slow answer. Raise
+    # `requestTimeout` below if you want one anyway.
     - name: smart
-      provider: Anthropic
-      model: claude-sonnet-4-5-20250929
+      provider: Ollama
+      model: llama3.2:latest
+      baseURL: http://ollama.educates.test:11434
       credentialRef:
         name: agentgateway-provider-credentials
         key: api-key
@@ -42,6 +64,31 @@ spec:
   rateLimit:
     failureMode: FailClosed
 
+  # How long the gateway waits for a complete response. Unset means
+  # agentgateway's default, which is right for every hosted provider. Raise it
+  # only for a slow local model: a reasoning model on a laptop can need three
+  # minutes, and without this the attendee sees a connection error rather than
+  # a slow reply.
+  #
+  #   requestTimeout: 180s
+
+# ---
+# Anthropic instead. Create the Secret with an sk-ant-... key from
+# console.anthropic.com.
+#
+#   - name: fast
+#     provider: Anthropic
+#     model: claude-haiku-4-5-20251001
+#     credentialRef:
+#       name: agentgateway-provider-credentials
+#       key: api-key
+#   - name: smart
+#     provider: Anthropic
+#     model: claude-sonnet-4-5-20250929
+#     credentialRef:
+#       name: agentgateway-provider-credentials
+#       key: api-key
+#
 # ---
 # OpenAI instead. Create the Secret with an sk-... key from platform.openai.com.
 #
@@ -59,14 +106,36 @@ spec:
 #       key: api-key
 #
 # ---
-# Ollama, for a demo with no paid credential at all. Needs an Ollama reachable
-# from the cluster, and baseURL is required for this provider. The credential
-# Secret must still exist; its contents are ignored.
+# Google Gemini instead. Create the Secret with a key from
+# aistudio.google.com/apikey: an AI Studio key, which is a plain API key. Note
+# that Vertex AI is a separate provider here (`VertexAI`) using Google Cloud
+# credentials, not this one.
+#
+# Two Flash models rather than a Flash and a Pro: Pro is not served on the free
+# AI Studio tier at all, and asking for one fails with a 429 quota error naming
+# `limit: 0` rather than anything about billing. Check both names still work
+# before running a workshop, Google retires a model for new keys while still
+# listing it, and the failure is a 404 at the first request, mid-session.
 #
 #   - name: fast
-#     provider: Ollama
-#     model: llama3.2
-#     baseURL: http://ollama.ollama.svc.cluster.local:11434
+#     provider: Gemini
+#     model: gemini-3.6-flash
 #     credentialRef:
 #       name: agentgateway-provider-credentials
 #       key: api-key
+#   - name: smart
+#     provider: Gemini
+#     model: gemini-3.5-flash
+#     credentialRef:
+#       name: agentgateway-provider-credentials
+#       key: api-key
+#
+# ---
+# Ollama is the active configuration above. If yours runs inside the cluster
+# rather than on the network, the baseURL is its Service instead:
+#
+#     baseURL: http://ollama.ollama.svc.cluster.local:11434
+#
+# Either way the name must resolve from inside the cluster. A hostname that
+# works on your laptop but not in a pod fails at the first request with an
+# upstream connection error, not at apply time.

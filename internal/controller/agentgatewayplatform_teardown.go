@@ -5,9 +5,12 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -19,8 +22,8 @@ import (
 //
 // Order is the strict reverse of install. Every step tolerates a missing object
 // and a missing kind, because the Educates installer's teardown guard does not
-// wait for this operator and can remove cluster services — and the CRDs behind
-// these kinds — first.
+// wait for this operator and can remove cluster services, and the CRDs behind
+// these kinds, first.
 func (r *AgentGatewayPlatformReconciler) reconcileDelete(ctx context.Context, platform *agentgatewayv1alpha1.AgentGatewayPlatform) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -102,6 +105,14 @@ func (r *AgentGatewayPlatformReconciler) drainConfiguration(ctx context.Context,
 		return fmt.Errorf("delete Gateway: %w", err)
 	}
 
+	// Also the pre-rename Gateway, in case teardown is the first thing an
+	// upgraded operator does and reconcile never got the chance to prune it.
+	// Label-guarded exactly as pruneLegacyGateway is: a Gateway of that name
+	// this operator did not create is not ours to remove, on teardown either.
+	if err := r.pruneLegacyGateway(ctx, namespace); err != nil {
+		return fmt.Errorf("delete legacy Gateway: %w", err)
+	}
+
 	params := newParameters()
 	params.SetName(ParametersName)
 	params.SetNamespace(namespace)
@@ -109,6 +120,45 @@ func (r *AgentGatewayPlatformReconciler) drainConfiguration(ctx context.Context,
 		return fmt.Errorf("delete parameters overlay: %w", err)
 	}
 
+	if err := r.drainModels(ctx, namespace); err != nil {
+		return fmt.Errorf("delete catalog models: %w", err)
+	}
+
+	return nil
+}
+
+// drainModels removes the models the catalog rendered.
+//
+// Unlike everything else here these have no fixed name, a catalog names them,
+// so they are found by label rather than constructed. They also carry no
+// ownerReferences, so nothing collects them on their own: without this they
+// outlive the Gateway they were parented to, and a later platform in the same
+// namespace inherits models from a catalog that may since have changed.
+//
+// This runs on a provider switch as well as a full teardown, which is right in
+// both cases: the models point at a Gateway that is going away either way, and
+// the catalog re-renders against the new one once it is ready.
+//
+// Label-scoped, so a model a cluster operator wrote by hand is left alone, and
+// tolerant of a missing kind: agentgateway's CRDs may already be gone by the
+// time this runs (ADR-0005).
+func (r *AgentGatewayPlatformReconciler) drainModels(ctx context.Context, namespace string) error {
+	models := newModelList()
+	if err := r.List(ctx, models,
+		client.InNamespace(namespace),
+		client.MatchingLabels{ManagedByLabel: ManagedByValue},
+	); err != nil {
+		if meta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+
+	for i := range models.Items {
+		if err := r.deleteIfPresent(ctx, &models.Items[i]); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

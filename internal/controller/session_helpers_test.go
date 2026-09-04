@@ -16,11 +16,11 @@ import (
 // Fixtures for the session and catalog specs.
 
 const (
-	// workshopNamespace stands in for $(workshop_namespace) — where the
+	// workshopNamespace stands in for $(workshop_namespace), where the
 	// attendee's pod actually runs, and so where the Secret has to be.
 	workshopNamespace = "educates-test-w01"
 
-	testGatewayURL = "http://agentgateway.agentgateway-system.svc.cluster.local:4000"
+	testGatewayURL = "http://agentgateway-educates.agentgateway-system.svc.cluster.local:4000"
 )
 
 // createReadyPlatform fakes a platform that has finished installing.

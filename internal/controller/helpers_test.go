@@ -21,7 +21,7 @@ import (
 // envtest is an API server with no controllers: no Deployment controller, no
 // garbage collector, and nothing that would make a Gateway report Programmed.
 // Anything a real cluster's controllers would do has to be simulated here,
-// which is also what makes the resulting assertions honest — the test says
+// which is also what makes the resulting assertions honest: the test says
 // exactly which upstream signal it is standing in for.
 
 // createPlatform creates the default bundled platform declaration.
@@ -272,11 +272,15 @@ func driveToReady() {
 	markGatewayProgrammed(testGatewayNamespace, GatewayName)
 	markDeploymentAvailable(testGatewayNamespace, GatewayName)
 
-	// The rate-limit service the operator renders, rolled out.
-	Eventually(func() error {
-		return k8sClient.Get(ctx, types.NamespacedName{
-			Namespace: testGatewayNamespace, Name: RateLimitServiceName,
-		}, &appsv1.Deployment{})
-	}, pollTimeout, pollInterval).Should(Succeed())
-	markDeploymentAvailable(testGatewayNamespace, RateLimitServiceName)
+	// The rate-limit stack the operator renders, rolled out. Both Deployments:
+	// readiness gates on the counter store as well as the service, since the
+	// service comes up Available with no store reachable.
+	for _, name := range []string{redisName, RateLimitServiceName} {
+		Eventually(func() error {
+			return k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: testGatewayNamespace, Name: name,
+			}, &appsv1.Deployment{})
+		}, pollTimeout, pollInterval).Should(Succeed())
+		markDeploymentAvailable(testGatewayNamespace, name)
+	}
 }
