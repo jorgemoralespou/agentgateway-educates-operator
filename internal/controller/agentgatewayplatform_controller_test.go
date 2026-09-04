@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -278,6 +279,96 @@ var _ = Describe("AgentGatewayPlatform reconciler", func() {
 			Expect(ref["kind"]).To(Equal(KindAgentgatewayParameters))
 			Expect(ref["name"]).To(Equal(ParametersName),
 				"the ref must name the overlay this operator created")
+		})
+	})
+
+	Describe("the counter store's security context", func() {
+		// RunAsNonRoot on its own is not enough. The kubelet resolves it
+		// against the image's declared user, and redis:7-alpine declares none —
+		// so it assumes root, refuses the container outright, and the pod sits
+		// at CreateContainerConfigError with "container has runAsNonRoot and
+		// image will run as root". That is a permanent config error, not a
+		// crash loop: no amount of retrying clears it, and the rate-limit
+		// service has no counter store until someone notices.
+		//
+		// envoyproxy/ratelimit declares USER 65532, which is why the identical
+		// pod-level context works there and this one has to name a UID.
+		It("names a non-root UID, because the redis image declares no default user", func() {
+			createPlatform()
+			markDeploymentAvailable(testGatewayNamespace, AgentgatewayReleaseName)
+
+			// The rate-limit stack is rendered only after the Gateway is
+			// programmed, so the earlier steps have to run for redis to exist.
+			createAcceptedGatewayClass()
+			Eventually(func() error {
+				gw := newGateway()
+				return k8sClient.Get(ctx,
+					types.NamespacedName{Namespace: testGatewayNamespace, Name: GatewayName}, gw)
+			}, pollTimeout, pollInterval).Should(Succeed())
+			markGatewayProgrammed(testGatewayNamespace, GatewayName)
+			markDeploymentAvailable(testGatewayNamespace, GatewayName)
+
+			deploy := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: testGatewayNamespace, Name: redisName,
+				}, deploy)
+			}, pollTimeout, pollInterval).Should(Succeed())
+
+			sc := deploy.Spec.Template.Spec.SecurityContext
+			Expect(sc).NotTo(BeNil())
+			Expect(sc.RunAsNonRoot).NotTo(BeNil())
+			Expect(*sc.RunAsNonRoot).To(BeTrue())
+
+			Expect(sc.RunAsUser).NotTo(BeNil(),
+				"RunAsNonRoot without RunAsUser leaves the kubelet unable to "+
+					"prove redis:7-alpine is non-root, and it refuses the container")
+			Expect(*sc.RunAsUser).NotTo(BeZero(), "must not be root")
+			Expect(*sc.RunAsUser).To(Equal(int64(redisUID)))
+		})
+	})
+
+	Describe("readiness of the counter store", func() {
+		// The rate-limit service reports Available with no counter store
+		// reachable: it retries redis in the background and answers checks
+		// meanwhile. Gating only on the service therefore let the platform
+		// report Ready while the store was in CreateContainerConfigError — the
+		// exact state that made this bug survive to a live cluster. Token
+		// budgets are unenforceable without the store, so waiting is correct.
+		It("does not report ready while the counter store is unavailable", func() {
+			createPlatform()
+			markDeploymentAvailable(testGatewayNamespace, AgentgatewayReleaseName)
+			createAcceptedGatewayClass()
+
+			Eventually(func() error {
+				gw := newGateway()
+				return k8sClient.Get(ctx,
+					types.NamespacedName{Namespace: testGatewayNamespace, Name: GatewayName}, gw)
+			}, pollTimeout, pollInterval).Should(Succeed())
+			markGatewayProgrammed(testGatewayNamespace, GatewayName)
+			markDeploymentAvailable(testGatewayNamespace, GatewayName)
+
+			// Everything except the counter store is healthy.
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: testGatewayNamespace, Name: RateLimitServiceName,
+				}, &appsv1.Deployment{})
+			}, pollTimeout, pollInterval).Should(Succeed())
+			markDeploymentAvailable(testGatewayNamespace, RateLimitServiceName)
+
+			Consistently(func() metav1.ConditionStatus {
+				return conditionStatus(agentgatewayv1alpha1.ConditionRateLimitReady)
+			}, "2s", pollInterval).ShouldNot(Equal(metav1.ConditionTrue),
+				"RateLimitReady must not be True while redis is unavailable")
+
+			Expect(conditionStatus(agentgatewayv1alpha1.ConditionReady)).
+				NotTo(Equal(metav1.ConditionTrue))
+
+			// Once the store rolls out, readiness follows.
+			markDeploymentAvailable(testGatewayNamespace, redisName)
+			Eventually(func() metav1.ConditionStatus {
+				return conditionStatus(agentgatewayv1alpha1.ConditionRateLimitReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
 		})
 	})
 
