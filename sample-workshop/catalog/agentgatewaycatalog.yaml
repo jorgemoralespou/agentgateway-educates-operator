@@ -7,31 +7,52 @@
 #
 # Apply it with `make deploy-sample-catalog`, which first checks the credential
 # Secret below exists. Nothing in this repository creates that Secret: a
-# provider API key is yours to supply.
+# provider API key is yours to supply. The Secret is required even for Ollama,
+# which needs no credential — only its existence is checked, not its contents,
+# so any value does for a local model:
 #
 #   kubectl create secret generic agentgateway-provider-credentials \
 #     --namespace agentgateway-system \
-#     --from-literal=api-key=sk-ant-...
+#     --from-literal=api-key=unused-by-ollama
 #
 # The `name` of each model is what attendees address — `fast`, `smart`. The
 # provider's own model name is never exposed to them, so switching provider
 # below leaves the workshop content untouched.
+#
+# Ollama is the default here because it needs no account and no spending. The
+# hosted providers are below, commented; each expects its own key in that same
+# Secret.
 apiVersion: agentgateway.operators.educates.dev/v1alpha1
 kind: AgentGatewayCatalog
 metadata:
   name: cluster
 spec:
   models:
+    # Ollama, so the workshop runs with no paid credential and no data leaving
+    # the network. baseURL is required for this provider and points at wherever
+    # Ollama actually runs — it must resolve from *inside* the cluster, not just
+    # from your laptop. Pull the model first with `ollama pull llama3.2`.
     - name: fast
-      provider: Anthropic
-      model: claude-haiku-4-5-20251001
+      provider: Ollama
+      model: llama3.2:latest
+      baseURL: http://ollama.educates.test:11434
       credentialRef:
         name: agentgateway-provider-credentials
         key: api-key
 
+    # Deliberately the same model as `fast` here. Two names that resolve to one
+    # model is a perfectly good demonstration — the point of the aliases is that
+    # attendees address `fast` and `smart` and never learn what is behind them,
+    # so the binding can change without touching workshop content.
+    #
+    # Prefer a small model for the second name too. A reasoning model such as
+    # deepseek-r1:8b takes over a minute per reply on a laptop, which exceeds
+    # agentgateway's request timeout: the attendee sees `upstream call failed:
+    # connection closed before message completed`, not a slow answer.
     - name: smart
-      provider: Anthropic
-      model: claude-sonnet-4-5-20250929
+      provider: Ollama
+      model: llama3.2:latest
+      baseURL: http://ollama.educates.test:11434
       credentialRef:
         name: agentgateway-provider-credentials
         key: api-key
@@ -42,6 +63,23 @@ spec:
   rateLimit:
     failureMode: FailClosed
 
+# ---
+# Anthropic instead. Create the Secret with an sk-ant-... key from
+# console.anthropic.com.
+#
+#   - name: fast
+#     provider: Anthropic
+#     model: claude-haiku-4-5-20251001
+#     credentialRef:
+#       name: agentgateway-provider-credentials
+#       key: api-key
+#   - name: smart
+#     provider: Anthropic
+#     model: claude-sonnet-4-5-20250929
+#     credentialRef:
+#       name: agentgateway-provider-credentials
+#       key: api-key
+#
 # ---
 # OpenAI instead. Create the Secret with an sk-... key from platform.openai.com.
 #
@@ -84,14 +122,11 @@ spec:
 #       key: api-key
 #
 # ---
-# Ollama, for a demo with no paid credential at all. Needs an Ollama reachable
-# from the cluster, and baseURL is required for this provider. The credential
-# Secret must still exist; its contents are ignored.
+# Ollama is the active configuration above. If yours runs inside the cluster
+# rather than on the network, the baseURL is its Service instead:
 #
-#   - name: fast
-#     provider: Ollama
-#     model: llama3.2
 #     baseURL: http://ollama.ollama.svc.cluster.local:11434
-#     credentialRef:
-#       name: agentgateway-provider-credentials
-#       key: api-key
+#
+# Either way the name must resolve from inside the cluster. A hostname that
+# works on your laptop but not in a pod fails at the first request with an
+# upstream connection error, not at apply time.
