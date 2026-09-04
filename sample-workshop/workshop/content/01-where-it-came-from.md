@@ -67,7 +67,7 @@ And the Secret it produced — the keys, not the values:
 
 ```execute
 kubectl get secret "$SESSION_NAME-agentgateway" -n "$WORKSHOP_NAMESPACE" \
-  -o jsonpath='{range $k, $v := .data}{$k}{"\n"}{end}'
+  -o go-template='{{range $k, $v := .data}}{{$k}}{{"\n"}}{{end}}'
 ```
 
 Two keys: `api-key` and `base-url` — exactly the two environment variables you
