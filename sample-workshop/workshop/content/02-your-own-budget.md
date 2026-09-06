@@ -71,7 +71,14 @@ allotted:
 
 ```execute
 kubectl get agentgatewaysession "$SESSION_NAME" -n "$WORKSHOP_NAMESPACE" \
-  -o jsonpath='{.spec.tokenBudget}{"\n"}'
+  -o jsonpath='{.status.effectiveTokenBudget}{"\n"}'
 ```
+
+Read from `status`, not `spec`, on purpose. A grant may leave `tokenBudget`
+out entirely and inherit whatever the cluster operator set on the catalog, and
+a grant asking for more than the operator allows is clamped down to their
+maximum. `status.effectiveTokenBudget` is what you are actually enforced at
+after all of that; `spec.tokenBudget` is only what this particular grant asked
+for, and may be empty.
 
 Next: what happens to this key when you finish.
