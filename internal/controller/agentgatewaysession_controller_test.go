@@ -219,7 +219,7 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Namespace: workshopNamespace, Name: "ws-004",
 			}, live)).To(Succeed())
-			live.Spec.TokenBudget = 200000
+			live.Spec.TokenBudget = agentgatewayv1alpha1.TokenBudgetValue(200000)
 			Expect(k8sClient.Update(ctx, live)).To(Succeed())
 
 			Eventually(func() int64 {
@@ -344,6 +344,72 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 		})
 	})
 
+	Describe("the token budget as an override", func() {
+		// The whole point of dropping the schema default: an omitted budget has
+		// to survive the round trip as absent, or no inherited value could ever
+		// take effect because the controller could not tell it was omitted.
+		It("accepts a grant that omits the budget, and reads it back as unset", func() {
+			session := &agentgatewayv1alpha1.AgentGatewaySession{
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-014", Namespace: workshopNamespace},
+				Spec: agentgatewayv1alpha1.AgentGatewaySessionSpec{
+					CatalogRef: agentgatewayv1alpha1.CatalogReference{
+						Name: agentgatewayv1alpha1.SingletonName,
+					},
+					TTL: "4h",
+				},
+			}
+			Expect(k8sClient.Create(ctx, session)).To(Succeed())
+
+			live := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-014",
+			}, live)).To(Succeed())
+			Expect(live.Spec.TokenBudget).To(BeNil(),
+				"an omitted budget must not be stamped with a default")
+
+			// And it still resolves, so nothing an attendee sees changes.
+			Expect(live.TokenBudget()).To(Equal(agentgatewayv1alpha1.DefaultTokenBudget))
+
+			Eventually(func() string {
+				cm := &corev1.ConfigMap{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: testGatewayNamespace, Name: "ws-014-agentgateway",
+				}, cm); err != nil {
+					return ""
+				}
+				return parseRegistrationEntry(cm, "ws-014").Metadata[metadataKeyTokenBudget]
+			}, pollTimeout, pollInterval).Should(Equal("100000"))
+		})
+
+		It("keeps the value a grant set explicitly", func() {
+			session := createSession("ws-015")
+			live := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: session.Name,
+			}, live)).To(Succeed())
+
+			Expect(live.Spec.TokenBudget).NotTo(BeNil())
+			Expect(*live.Spec.TokenBudget).To(Equal(int64(100000)))
+		})
+
+		// Zero stops being a legal value, so a client that strips zero values
+		// yields a genuinely absent field rather than a ceiling of no tokens.
+		It("rejects a budget of zero", func() {
+			session := &agentgatewayv1alpha1.AgentGatewaySession{
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-016", Namespace: workshopNamespace},
+				Spec: agentgatewayv1alpha1.AgentGatewaySessionSpec{
+					CatalogRef: agentgatewayv1alpha1.CatalogReference{
+						Name: agentgatewayv1alpha1.SingletonName,
+					},
+					TokenBudget: agentgatewayv1alpha1.TokenBudgetValue(0),
+					TTL:         "4h",
+				},
+			}
+			Expect(k8sClient.Create(ctx, session)).NotTo(Succeed(),
+				"zero must be rejected by validation, not registered as a ceiling")
+		})
+	})
+
 	Describe("placement", func() {
 		// Without `namespace: $(workshop_namespace)` the grant lands in the
 		// session namespace, the Secret follows it there, and the attendee's
@@ -355,7 +421,7 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 				ObjectMeta: metav1.ObjectMeta{Name: "ws-006", Namespace: sessionNS.Name},
 				Spec: agentgatewayv1alpha1.AgentGatewaySessionSpec{
 					CatalogRef:  agentgatewayv1alpha1.CatalogReference{Name: agentgatewayv1alpha1.SingletonName},
-					TokenBudget: 100000,
+					TokenBudget: agentgatewayv1alpha1.TokenBudgetValue(100000),
 				},
 			}
 			Expect(k8sClient.Create(ctx, session)).To(Succeed())

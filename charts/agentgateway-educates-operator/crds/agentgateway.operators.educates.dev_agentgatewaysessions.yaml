@@ -76,12 +76,22 @@ spec:
                     type: string
                 type: object
               tokenBudget:
-                default: 100000
                 description: |-
-                  TokenBudget is the ceiling on LLM tokens for this session's lifetime.
+                  TokenBudget is the ceiling on LLM tokens for this session.
 
                   Measured in tokens rather than requests because cost tracks tokens: one
                   request with a large context can cost more than a hundred small ones.
+
+                  An override, not a setting: leave it unset and the session inherits the
+                  ordinary budget the cluster operator configured. A pointer with no schema
+                  default so that "unset" survives the round trip through the API server;
+                  with a stamped default the controller cannot tell an omitted field from
+                  one asking for exactly the default, and no inherited value could ever
+                  take effect.
+
+                  Zero is not a legal value. A client that strips zero values would
+                  otherwise register a ceiling of no tokens at all, and every request the
+                  attendee makes would be rejected.
                 format: int64
                 minimum: 1
                 type: integer

@@ -25,14 +25,24 @@ type AgentGatewaySessionSpec struct {
 	// +optional
 	CatalogRef CatalogReference `json:"catalogRef,omitempty"`
 
-	// TokenBudget is the ceiling on LLM tokens for this session's lifetime.
+	// TokenBudget is the ceiling on LLM tokens for this session.
 	//
 	// Measured in tokens rather than requests because cost tracks tokens: one
 	// request with a large context can cost more than a hundred small ones.
+	//
+	// An override, not a setting: leave it unset and the session inherits the
+	// ordinary budget the cluster operator configured. A pointer with no schema
+	// default so that "unset" survives the round trip through the API server;
+	// with a stamped default the controller cannot tell an omitted field from
+	// one asking for exactly the default, and no inherited value could ever
+	// take effect.
+	//
+	// Zero is not a legal value. A client that strips zero values would
+	// otherwise register a ceiling of no tokens at all, and every request the
+	// attendee makes would be rejected.
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=100000
 	// +optional
-	TokenBudget int64 `json:"tokenBudget,omitempty"`
+	TokenBudget *int64 `json:"tokenBudget,omitempty"`
 
 	// TTL is a backstop expiry on the participant key, independent of any
 	// cleanup path.
@@ -176,23 +186,32 @@ func (s *AgentGatewaySession) ResourceName() string {
 	return s.Name + SecretSuffix
 }
 
-// DefaultTokenBudget is the ceiling applied when a grant does not set one.
-// Matches the CRD's own default, so the two cannot drift.
+// DefaultTokenBudget is the ceiling applied when a grant does not set one and
+// no cluster-wide default is configured either. The last link in the
+// resolution chain, and the only one that cannot itself be absent.
 const DefaultTokenBudget int64 = 100000
 
 // DefaultTTL is the backstop expiry applied when a grant does not set one.
 // Matches the CRD's own default, so the two cannot drift.
 const DefaultTTL = "4h"
 
+// TokenBudgetValue is a convenience for setting the nil-able budget, so
+// callers writing a grant do not each declare their own local for the address
+// of a literal.
+func TokenBudgetValue(v int64) *int64 {
+	return &v
+}
+
 // TokenBudget returns the session's token ceiling, defaulted.
 //
-// Defaulted here as well as in the CRD because a grant created before the
-// default existed, or through a client that strips zero values, would otherwise
-// register a budget of zero, which the gateway would read as "no tokens at
-// all" and reject every request the attendee makes.
+// The schema no longer stamps a default, so this accessor is where an omitted
+// budget acquires one. Zero is rejected by validation rather than treated as a
+// value, so a field stripped by a client that drops zero values arrives here as
+// genuinely absent and resolves to the default, instead of registering a
+// ceiling of no tokens at all.
 func (s *AgentGatewaySession) TokenBudget() int64 {
-	if s.Spec.TokenBudget > 0 {
-		return s.Spec.TokenBudget
+	if s.Spec.TokenBudget != nil && *s.Spec.TokenBudget > 0 {
+		return *s.Spec.TokenBudget
 	}
 	return DefaultTokenBudget
 }

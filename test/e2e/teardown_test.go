@@ -59,7 +59,7 @@ var _ = Describe("session teardown on a real cluster", Ordered, func() {
 			ObjectMeta: metav1.ObjectMeta{Name: sessionName, Namespace: workshopNS},
 			Spec: agentgatewayv1alpha1.AgentGatewaySessionSpec{
 				CatalogRef:  agentgatewayv1alpha1.CatalogReference{Name: agentgatewayv1alpha1.SingletonName},
-				TokenBudget: 1000,
+				TokenBudget: agentgatewayv1alpha1.TokenBudgetValue(1000),
 				TTL:         "1h",
 			},
 		}

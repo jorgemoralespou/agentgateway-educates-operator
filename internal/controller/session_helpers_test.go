@@ -99,7 +99,7 @@ func createSession(name string) *agentgatewayv1alpha1.AgentGatewaySession {
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: workshopNamespace},
 		Spec: agentgatewayv1alpha1.AgentGatewaySessionSpec{
 			CatalogRef:  agentgatewayv1alpha1.CatalogReference{Name: agentgatewayv1alpha1.SingletonName},
-			TokenBudget: 100000,
+			TokenBudget: agentgatewayv1alpha1.TokenBudgetValue(100000),
 			TTL:         "4h",
 		},
 	}
