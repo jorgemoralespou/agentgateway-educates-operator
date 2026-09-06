@@ -96,6 +96,74 @@ var _ = Describe("renderPolicySpec", func() {
 		})
 	})
 
+	Describe("the cost descriptor", func() {
+		descriptors := func(spec map[string]any) []any {
+			GinkgoHelper()
+			rateLimit, _ := traffic(spec)["rateLimit"].(map[string]any)
+			global, _ := rateLimit["global"].(map[string]any)
+			d, ok := global["descriptors"].([]any)
+			Expect(ok).To(BeTrue(), "the rate limit must carry descriptors")
+			return d
+		}
+
+		// Beside the token descriptor rather than instead of it. The token one
+		// cannot be skipped, since its cost defaults to the token count with no
+		// CEL involved, which makes it the backstop when a cost expression
+		// fails silently.
+		It("sits alongside the token descriptor, which remains enforced", func() {
+			spec := renderPolicySpec(agentgatewayv1alpha1.FailClosed, "agentgateway-system", "",
+				string(agentgatewayv1alpha1.DefaultBudgetWindow), agentgatewayv1alpha1.DefaultTokenBudget)
+
+			d := descriptors(spec)
+			Expect(d).To(HaveLen(2), "both budgets must be enforced")
+
+			token, _ := d[0].(map[string]any)
+			Expect(token).NotTo(HaveKey("cost"),
+				"the token descriptor must keep its default cost, which cannot be skipped")
+			Expect(token["limitOverride"]).To(ContainSubstring(metadataKeyTokenBudget))
+
+			cost, _ := d[1].(map[string]any)
+			Expect(cost["cost"]).To(Equal(costExpression()))
+			Expect(cost["limitOverride"]).To(ContainSubstring(metadataKeyCostBudget))
+		})
+
+		// Keying on the cost budget's presence is what makes the ceiling
+		// opt-in: a key without one contributes no entry, so the descriptor
+		// does not apply to it.
+		It("keys on the session and on the cost budget's presence", func() {
+			spec := renderPolicySpec(agentgatewayv1alpha1.FailClosed, "agentgateway-system", "",
+				string(agentgatewayv1alpha1.DefaultBudgetWindow), agentgatewayv1alpha1.DefaultTokenBudget)
+
+			cost, _ := descriptors(spec)[1].(map[string]any)
+			entries, ok := cost["entries"].([]any)
+			Expect(ok).To(BeTrue())
+			Expect(entries).To(HaveLen(2))
+
+			first, _ := entries[0].(map[string]any)
+			Expect(first["name"]).To(Equal(metadataKeySession))
+
+			second, _ := entries[1].(map[string]any)
+			Expect(second["name"]).To(Equal(metadataKeyCostBudget))
+			Expect(second["expression"]).To(Equal("apiKey." + metadataKeyCostBudget))
+		})
+
+		It("shares the token descriptor's window", func() {
+			spec := renderPolicySpec(agentgatewayv1alpha1.FailClosed, "agentgateway-system", "",
+				"hour", agentgatewayv1alpha1.DefaultTokenBudget)
+
+			d := descriptors(spec)
+			token, _ := d[0].(map[string]any)
+			cost, _ := d[1].(map[string]any)
+
+			// Both fall back to the same rendered window, and both read the
+			// same per-grant field, so the two ceilings always cover the same
+			// span.
+			Expect(cost["limitOverride"]).To(ContainSubstring(`: "hour")`))
+			Expect(token["limitOverride"]).To(ContainSubstring(`: "hour")`))
+			Expect(cost["limitOverride"]).To(ContainSubstring("apiKey." + metadataKeyBudgetWindow))
+		})
+	})
+
 	Describe("the policy target", func() {
 		// targetRefs has no namespace field: the target must be in the policy's
 		// own namespace, which is the whole reason registrations cannot live

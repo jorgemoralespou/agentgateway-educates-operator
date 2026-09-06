@@ -42,6 +42,54 @@ func tokenBudgetOverride(window string, fallbackBudget int64) string {
 		`{"unit": ` + unit + `, "requestsPerUnit": ` + strconv.FormatInt(fallbackBudget, 10) + `}`
 }
 
+// costBudgetOverride reads each attendee's own spend ceiling off their key
+// registration, in micro-dollars.
+//
+// Shares the token descriptor's window, so the two ceilings always cover the
+// same span. A registration with no cost budget is not reached: the descriptor
+// entry keys on the cost budget's presence, so a key without one contributes no
+// entry and the descriptor does not apply to it.
+func costBudgetOverride(window string) string {
+	unit := `(has(apiKey.` + metadataKeyBudgetWindow + `) ? ` +
+		`apiKey.` + metadataKeyBudgetWindow + ` : "` + window + `")`
+	return `{"unit": ` + unit + `, "requestsPerUnit": int(apiKey.` + metadataKeyCostBudget + `)}`
+}
+
+// unpricedRequestMicroDollars is charged against a cost budget when a request
+// could not be priced.
+//
+// agentgateway prices each request against its own built-in model cost catalog
+// and exposes the realized dollar cost to CEL, but it states plainly that a
+// request is not charged when its provider does not report the cost the budget
+// unit needs. Unpriced models are therefore a real case, not a hypothetical.
+//
+// The fallback is deliberately pessimistic rather than zero. Charging nothing
+// for what cannot be priced turns an unpriced model into an unmetered one,
+// which is the failure this feature exists to prevent. A tenth of a cent per
+// request is high enough that a runaway loop still exhausts a small budget, and
+// low enough that a workshop on a priced model never notices it.
+const unpricedRequestMicroDollars = 1000
+
+// costExpression is what each request charges against the cost budget.
+//
+// The presence test is load-bearing. agentgateway skips a descriptor whose cost
+// expression fails to evaluate or does not yield a non-negative integer, logging
+// at debug level only. That is not covered by the rate-limit failure mode, which
+// addresses the service being unreachable rather than a descriptor being
+// dropped, and there is no feedback path back to this operator: a skipped
+// descriptor is a budget silently not enforced. So the expression tests for a
+// priced cost before using it and charges the pessimistic flat fallback
+// otherwise, rather than risking an evaluation failure.
+func costExpression() string {
+	return `has(llm.total_cost) ? ` +
+		`int(llm.total_cost * ` + strconv.Itoa(MicroDollarsPerDollar) + `) : ` +
+		strconv.Itoa(unpricedRequestMicroDollars)
+}
+
+// MicroDollarsPerDollar mirrors the API package's constant, so the CEL
+// expression and the parsed budget scale by the same factor.
+const MicroDollarsPerDollar = agentgatewayv1alpha1.MicroDollarsPerDollar
+
 // ensurePolicy renders the single API-key policy.
 //
 // Exactly one policy, cluster-wide. API-key policies *replace* rather than
@@ -183,6 +231,37 @@ func renderPolicySpec(failureMode agentgatewayv1alpha1.RateLimitFailureMode, nam
 							// carries its own limit and CEL reads it here
 							// (ADR-0003).
 							"limitOverride": tokenBudgetOverride(budgetWindow, fallbackBudget),
+						},
+						// The cost descriptor, beside the token one rather than
+						// instead of it. Whichever ceiling runs out first stops
+						// the attendee.
+						//
+						// The token descriptor stays because it cannot be
+						// skipped: its cost defaults to the total token count
+						// with no CEL involved, which makes it the backstop
+						// when a cost expression fails silently.
+						map[string]any{
+							"unit": "Tokens",
+							"entries": []any{
+								map[string]any{
+									"name":       metadataKeySession,
+									"expression": "apiKey." + metadataKeySession,
+								},
+								// Keys on the cost budget's presence, so a key
+								// without one contributes no entry and this
+								// descriptor simply does not apply to it. That
+								// is what makes the cost ceiling opt-in without
+								// rendering a second policy.
+								map[string]any{
+									"name":       metadataKeyCostBudget,
+									"expression": "apiKey." + metadataKeyCostBudget,
+								},
+							},
+							// What each request charges. Unlike the token
+							// descriptor, which defaults to the token count,
+							// this one is an explicit expression.
+							"cost":          costExpression(),
+							"limitOverride": costBudgetOverride(budgetWindow),
 						},
 					},
 				},

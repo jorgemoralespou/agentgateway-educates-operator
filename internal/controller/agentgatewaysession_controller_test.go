@@ -761,6 +761,136 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 		})
 	})
 
+	Describe("cost budgets", func() {
+		// No pricing data is maintained by this project, so no spend ceiling is
+		// imposed unless someone asks for one.
+		It("configures no cost ceiling when nobody asks for one", func() {
+			setCatalogBudgets(nil)
+			session := createSession("ws-031")
+
+			Eventually(func() metav1.ConditionStatus {
+				return sessionCondition(session, agentgatewayv1alpha1.ConditionReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: testGatewayNamespace, Name: "ws-031-agentgateway",
+			}, cm)).To(Succeed())
+			Expect(parseRegistrationEntry(cm, "ws-031").Metadata).
+				NotTo(HaveKey(metadataKeyCostBudget))
+
+			got := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-031",
+			}, got)).To(Succeed())
+			Expect(got.Status.EffectiveCostBudget).To(BeEmpty())
+		})
+
+		It("carries a grant's cost budget to the registration in micro-dollars", func() {
+			setCatalogBudgets(nil)
+			session := &agentgatewayv1alpha1.AgentGatewaySession{
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-032", Namespace: workshopNamespace},
+				Spec: agentgatewayv1alpha1.AgentGatewaySessionSpec{
+					CatalogRef: agentgatewayv1alpha1.CatalogReference{
+						Name: agentgatewayv1alpha1.SingletonName,
+					},
+					CostBudget: "0.50",
+					TTL:        "4h",
+				},
+			}
+			Expect(k8sClient.Create(ctx, session)).To(Succeed())
+
+			Eventually(func() string {
+				cm := &corev1.ConfigMap{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: testGatewayNamespace, Name: "ws-032-agentgateway",
+				}, cm); err != nil {
+					return ""
+				}
+				return parseRegistrationEntry(cm, "ws-032").Metadata[metadataKeyCostBudget]
+			}, pollTimeout, pollInterval).Should(Equal("500000"))
+
+			got := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-032",
+			}, got)).To(Succeed())
+			Expect(got.Status.EffectiveCostBudget).To(Equal("$0.50"))
+			// The token budget is enforced alongside it, not replaced by it.
+			Expect(got.Status.EffectiveTokenBudget).To(Equal(agentgatewayv1alpha1.DefaultTokenBudget))
+		})
+
+		It("inherits the catalog's default cost budget", func() {
+			setCatalogBudgets(&agentgatewayv1alpha1.BudgetSpec{
+				DefaultCostBudget: "0.25",
+			})
+			createSession("ws-033")
+
+			Eventually(func() string {
+				got := &agentgatewayv1alpha1.AgentGatewaySession{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: workshopNamespace, Name: "ws-033",
+				}, got); err != nil {
+					return ""
+				}
+				return got.Status.EffectiveCostBudget
+			}, pollTimeout, pollInterval).Should(Equal("$0.25"))
+		})
+
+		It("clamps a cost budget above the catalog's maximum, and still becomes Ready", func() {
+			setCatalogBudgets(&agentgatewayv1alpha1.BudgetSpec{
+				MaxCostBudget: "1.00",
+			})
+			session := &agentgatewayv1alpha1.AgentGatewaySession{
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-034", Namespace: workshopNamespace},
+				Spec: agentgatewayv1alpha1.AgentGatewaySessionSpec{
+					CatalogRef: agentgatewayv1alpha1.CatalogReference{
+						Name: agentgatewayv1alpha1.SingletonName,
+					},
+					CostBudget: "5.00",
+					TTL:        "4h",
+				},
+			}
+			Expect(k8sClient.Create(ctx, session)).To(Succeed())
+
+			Eventually(func() metav1.ConditionStatus {
+				return sessionCondition(session, agentgatewayv1alpha1.ConditionReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			got := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-034",
+			}, got)).To(Succeed())
+			Expect(got.Status.EffectiveCostBudget).To(Equal("$1.00"))
+
+			var clamp *metav1.Condition
+			for i := range got.Status.Conditions {
+				if got.Status.Conditions[i].Type == agentgatewayv1alpha1.ConditionBudgetWithinLimits {
+					clamp = &got.Status.Conditions[i]
+				}
+			}
+			Expect(clamp).NotTo(BeNil())
+			Expect(clamp.Status).To(Equal(metav1.ConditionFalse))
+			Expect(clamp.Message).To(ContainSubstring("$5.00"))
+			Expect(clamp.Message).To(ContainSubstring("$1.00"))
+		})
+
+		// No floating-point field belongs in a custom resource, so the API
+		// server rejects anything that is not a plain decimal string.
+		It("rejects a malformed cost budget", func() {
+			session := &agentgatewayv1alpha1.AgentGatewaySession{
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-035", Namespace: workshopNamespace},
+				Spec: agentgatewayv1alpha1.AgentGatewaySessionSpec{
+					CatalogRef: agentgatewayv1alpha1.CatalogReference{
+						Name: agentgatewayv1alpha1.SingletonName,
+					},
+					CostBudget: "$5.00",
+					TTL:        "4h",
+				},
+			}
+			Expect(k8sClient.Create(ctx, session)).NotTo(Succeed())
+		})
+	})
+
 	Describe("placement", func() {
 		// Without `namespace: $(workshop_namespace)` the grant lands in the
 		// session namespace, the Secret follows it there, and the attendee's

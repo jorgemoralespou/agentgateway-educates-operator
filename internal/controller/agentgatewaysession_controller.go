@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -149,26 +150,28 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 		catalog.catalogDefaultTokenBudget(),
 		catalog.catalogMaxTokenBudget())
 
+	cost := agentgatewayv1alpha1.ResolveCostBudget(
+		session.Spec.CostBudget,
+		catalog.catalogDefaultCostBudget(),
+		catalog.catalogMaxCostBudget())
+
 	// Clamping is reported rather than rejected: the grant still becomes Ready
 	// and the workshop still runs, at a budget the cluster operator is willing
 	// to pay for.
-	if budget.Clamped {
+	if budget.Clamped || cost.Clamped {
 		setCondition(&session.Status.Conditions, session.Generation,
 			agentgatewayv1alpha1.ConditionBudgetWithinLimits, metav1.ConditionFalse,
-			agentgatewayv1alpha1.ReasonBudgetClamped,
-			fmt.Sprintf("requested a token budget of %d, clamped to the catalog maximum of %d",
-				budget.Requested, budget.Value))
+			agentgatewayv1alpha1.ReasonBudgetClamped, clampMessage(budget, cost))
 	} else {
 		setCondition(&session.Status.Conditions, session.Generation,
 			agentgatewayv1alpha1.ConditionBudgetWithinLimits, metav1.ConditionTrue,
-			agentgatewayv1alpha1.ReasonReady,
-			fmt.Sprintf("enforced at a token budget of %d", budget.Value))
+			agentgatewayv1alpha1.ReasonReady, enforcedMessage(budget, cost))
 	}
 
 	// The registration carries the hash, the budget and the expiry, never key
 	// material. A lost Secret is repaired by generating a new key and updating
 	// the registration, which makes rotation the recovery path (ADR-0004).
-	if err := r.ensureRegistration(ctx, session, catalog.gatewayNamespace, key, expiresAt, budget); err != nil {
+	if err := r.ensureRegistration(ctx, session, catalog.gatewayNamespace, key, expiresAt, budget, cost); err != nil {
 		setCondition(&session.Status.Conditions, session.Generation,
 			agentgatewayv1alpha1.ConditionKeyRegistered, metav1.ConditionFalse,
 			agentgatewayv1alpha1.ReasonFailed, err.Error())
@@ -191,6 +194,11 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 	session.Status.GatewayURL = catalog.gatewayURL
 	session.Status.ExpiresAt = &metav1.Time{Time: expiresAt}
 	session.Status.EffectiveTokenBudget = budget.Value
+	if cost.Configured {
+		session.Status.EffectiveCostBudget = formatMicroDollars(cost.MicroDollars)
+	} else {
+		session.Status.EffectiveCostBudget = ""
+	}
 	session.Status.Phase = agentgatewayv1alpha1.SessionReady
 
 	setCondition(&session.Status.Conditions, session.Generation,
@@ -309,6 +317,74 @@ func (c resolvedCatalog) catalogMaxTokenBudget() *int64 {
 		return nil
 	}
 	return c.budgets.MaxTokenBudget
+}
+
+// catalogDefaultCostBudget is the cluster-wide spend default, empty when none
+// is declared.
+func (c resolvedCatalog) catalogDefaultCostBudget() string {
+	if c.budgets == nil {
+		return ""
+	}
+	return c.budgets.DefaultCostBudget
+}
+
+// catalogMaxCostBudget is the cluster-wide spend ceiling, empty when none is
+// imposed.
+func (c resolvedCatalog) catalogMaxCostBudget() string {
+	if c.budgets == nil {
+		return ""
+	}
+	return c.budgets.MaxCostBudget
+}
+
+// clampMessage names what the author asked for and what they got, for whichever
+// of the two budgets was brought down.
+//
+// Both numbers, because the point of surfacing the clamp is that an author can
+// see their requested value did not survive rather than debugging a limit they
+// did not set.
+func clampMessage(budget agentgatewayv1alpha1.ResolvedTokenBudget, cost agentgatewayv1alpha1.ResolvedCostBudget) string {
+	parts := []string{}
+	if budget.Clamped {
+		parts = append(parts, fmt.Sprintf(
+			"requested a token budget of %d, clamped to the catalog maximum of %d",
+			budget.Requested, budget.Value))
+	}
+	if cost.Clamped {
+		parts = append(parts, fmt.Sprintf(
+			"requested a cost budget of %s, clamped to the catalog maximum of %s",
+			formatMicroDollars(cost.Requested), formatMicroDollars(cost.MicroDollars)))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// enforcedMessage reports what the grant is actually enforced at.
+func enforcedMessage(budget agentgatewayv1alpha1.ResolvedTokenBudget, cost agentgatewayv1alpha1.ResolvedCostBudget) string {
+	msg := fmt.Sprintf("enforced at a token budget of %d", budget.Value)
+	if cost.Configured {
+		msg += fmt.Sprintf(" and a cost budget of %s", formatMicroDollars(cost.MicroDollars))
+	}
+	return msg
+}
+
+// formatMicroDollars renders a micro-dollar amount back as dollars, for a human
+// reading a condition.
+//
+// Rendered with integer arithmetic rather than a float, for the same reason the
+// parsing avoids one: the value is exact and should stay that way.
+func formatMicroDollars(micros int64) string {
+	whole := micros / agentgatewayv1alpha1.MicroDollarsPerDollar
+	frac := micros % agentgatewayv1alpha1.MicroDollarsPerDollar
+	if frac == 0 {
+		return fmt.Sprintf("$%d.00", whole)
+	}
+	// Six digits, then trailing zeros trimmed, so "$0.50" does not read as
+	// "$0.500000".
+	s := strings.TrimRight(fmt.Sprintf("%06d", frac), "0")
+	if len(s) < 2 {
+		s += "0"
+	}
+	return fmt.Sprintf("$%d.%s", whole, s)
 }
 
 // ensureSecret returns the attendee's key, generating one only when the Secret
@@ -444,7 +520,7 @@ func (r *AgentGatewaySessionReconciler) sessionNamespaceName(session *agentgatew
 // attendee: thirty concurrent workshop starts would otherwise contend on a
 // single hot object, and duplicate keys across ConfigMaps are documented
 // upstream as undefined.
-func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession, gatewayNamespace, key string, expiresAt time.Time, budget agentgatewayv1alpha1.ResolvedTokenBudget) error {
+func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession, gatewayNamespace, key string, expiresAt time.Time, budget agentgatewayv1alpha1.ResolvedTokenBudget, cost agentgatewayv1alpha1.ResolvedCostBudget) error {
 	name := session.ResourceName()
 	hash := participantkey.Hash(key)
 
@@ -457,7 +533,22 @@ func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, 
 		registered = &budget.Value
 	}
 
-	desiredEntry := buildRegistration(hash, session.Name, registered, session.BudgetWindow(), expiresAt)
+	// The cost ceiling is always pinned when one applies: unlike the token
+	// budget it has no shared descriptor row to fall through to, because the
+	// cost descriptor keys on this field's presence.
+	var registeredCost *int64
+	if cost.Configured {
+		registeredCost = &cost.MicroDollars
+	}
+
+	desiredEntry := buildRegistration(registrationInputs{
+		keyHash:          hash,
+		sessionName:      session.Name,
+		tokenBudget:      registered,
+		costMicroDollars: registeredCost,
+		window:           session.BudgetWindow(),
+		expiresAt:        expiresAt,
+	})
 	payload, err := marshalRegistration(desiredEntry)
 	if err != nil {
 		return err

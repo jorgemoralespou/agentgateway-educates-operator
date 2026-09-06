@@ -391,6 +391,56 @@ yields two budgets. The guarantee is "at most one reset", not "no reset", and
 second budget. If a workshop is scheduled across midnight UTC and that matters,
 set a smaller `tokenBudget` or a longer window.
 
+### Cost budgets
+
+A token budget counts every model's tokens the same, so an attendee on an
+expensive model costs far more than one on a cheap model for the same ceiling. A
+**cost budget** is expressed in the unit the provider actually invoices in, so
+the ceiling means the same thing whichever model an attendee picks:
+
+```yaml
+spec:
+  tokenBudget: 20000
+  costBudget: "0.50"     # US dollars, as a string
+```
+
+Cluster operators set a default and a maximum the same way as for tokens:
+
+```yaml
+spec:
+  budgets:
+    defaultCostBudget: "0.25"
+    maxCostBudget: "1.00"
+```
+
+Values are decimal **strings**, not numbers. A floating-point field in a custom
+resource would admit representation errors into a value compared for equality.
+They are parsed exactly and enforced in micro-dollars, which is the grain
+agentgateway prices requests at; whole cents would round most individual
+requests to zero.
+
+A cost budget is enforced **alongside** the token budget, never instead of it.
+Whichever runs out first stops the attendee. The token budget stays because it
+is the backstop: agentgateway skips a rate-limit descriptor whose cost
+expression fails to evaluate, logging at debug level only, with no feedback path
+back to this operator, and the token descriptor uses no expression at all so it
+cannot be skipped.
+
+Pricing comes from agentgateway's own built-in model cost catalog. This project
+maintains no pricing data. A request whose provider does not report a cost that
+can be priced is charged a flat pessimistic fallback of $0.001 rather than
+nothing, since charging nothing for an unpriced model would turn it into an
+unmetered one.
+
+Left unset everywhere, no cost ceiling applies and only the token budget
+enforces. The resolved value appears on the grant:
+
+```console
+$ kubectl get agentgatewaysession ws-001 -n educates-labs-w01 \
+    -o jsonpath='{.status.effectiveCostBudget}{"\n"}'
+$0.50
+```
+
 Changing `defaultTokenBudget` takes effect for sessions that are already
 running and did not set a budget of their own. That is not a fan-out across
 grants: a grant that inherits its budget carries none on its key registration,

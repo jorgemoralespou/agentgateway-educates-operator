@@ -156,6 +156,26 @@ type BudgetSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	MaxTokenBudget *int64 `json:"maxTokenBudget,omitempty"`
+
+	// DefaultCostBudget is the spend ceiling applied to a grant that does not
+	// ask for a specific one, in US dollars.
+	//
+	// A decimal string for the same reason the grant's is: no floating-point
+	// field belongs in a custom resource. Unset means grants inherit no cost
+	// ceiling, and the token budget alone applies to them.
+	// +kubebuilder:validation:Pattern=`^[0-9]+\.?[0-9]*$`
+	// +optional
+	DefaultCostBudget string `json:"defaultCostBudget,omitempty"`
+
+	// MaxCostBudget is the most any grant may spend in one window, in US
+	// dollars.
+	//
+	// The cost half of the same trust boundary MaxTokenBudget draws, and it
+	// clamps rather than rejects for the same reason. Left unset, nothing is
+	// clamped.
+	// +kubebuilder:validation:Pattern=`^[0-9]+\.?[0-9]*$`
+	// +optional
+	MaxCostBudget string `json:"maxCostBudget,omitempty"`
 }
 
 // CatalogPhase is an advisory summary. Conditions are authoritative.

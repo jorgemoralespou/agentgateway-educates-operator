@@ -50,7 +50,30 @@ type AgentGatewaySessionSpec struct {
 	// +optional
 	TokenBudget *int64 `json:"tokenBudget,omitempty"`
 
-	// BudgetWindow is how long one token budget lasts before it refills.
+	// CostBudget is the ceiling on spend for one budget window, in US dollars.
+	//
+	// A decimal string, "0.50", not a number: a floating-point field in a
+	// custom resource would admit representation errors into a value compared
+	// for equality. It is parsed exactly and enforced in micro-dollars.
+	//
+	// Where TokenBudget counts every model's tokens the same, this charges each
+	// request what the provider actually bills for it, so an expensive model
+	// drains the budget faster than a cheap one and the ceiling means the same
+	// thing whichever model an attendee picks.
+	//
+	// A cost budget is enforced *alongside* the token budget, not instead of
+	// it: whichever runs out first stops the attendee. The token budget stays
+	// the backstop, because a cost expression can fail to evaluate and be
+	// skipped silently.
+	//
+	// Unset means no cost ceiling, and the token budget alone applies.
+	// +kubebuilder:validation:Pattern=`^[0-9]+\.?[0-9]*$`
+	// +optional
+	CostBudget string `json:"costBudget,omitempty"`
+
+	// BudgetWindow is how long one budget lasts before it refills. It governs
+	// the token budget and the cost budget alike, so the two always cover the
+	// same span.
 	//
 	// Defaults to a day, which is longer than any workshop, so in practice an
 	// attendee gets one budget for their whole session. Before this field
@@ -169,6 +192,16 @@ type AgentGatewaySessionStatus struct {
 	// asking why an attendee got a 429.
 	// +optional
 	EffectiveTokenBudget int64 `json:"effectiveTokenBudget,omitempty"`
+
+	// EffectiveCostBudget is the spend ceiling actually enforced, in US
+	// dollars, after the grant's own value, the catalog's default and the
+	// catalog's maximum have been resolved.
+	//
+	// Empty when no cost ceiling applies, which is the ordinary case: this
+	// project maintains no pricing data and imposes no spend ceiling of its
+	// own.
+	// +optional
+	EffectiveCostBudget string `json:"effectiveCostBudget,omitempty"`
 }
 
 // AgentGatewaySession is one attendee's access to the Gateway for the duration

@@ -141,13 +141,27 @@ func (r *AgentGatewayPlatformReconciler) ensureRateLimitConfig(ctx context.Conte
 // A pure function so the descriptor row, which decides what every inheriting
 // grant is enforced at, can be asserted without an API server.
 func renderRateLimitConfig(window string, defaultBudget int64) string {
+	// The nested row declares the cost descriptor's two-entry key. The
+	// per-attendee ceiling always arrives through the policy's limitOverride,
+	// since a shared file cannot hold a row per attendee, but the service still
+	// requires the descriptor to be declared before it will honour an override
+	// for it. The value here is never the operative one, so it is set to the
+	// same figure as the token row rather than to something permissive.
 	return fmt.Sprintf(`domain: %s
 descriptors:
   - key: %s
     rate_limit:
       unit: %s
       requests_per_unit: %d
-`, RateLimitDomain, metadataKeySession, window, defaultBudget)
+    descriptors:
+      - key: %s
+        rate_limit:
+          unit: %s
+          requests_per_unit: %d
+`,
+		RateLimitDomain,
+		metadataKeySession, window, defaultBudget,
+		metadataKeyCostBudget, window, defaultBudget)
 }
 
 // ensureRedis renders the counter store, deliberately without persistence.

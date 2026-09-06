@@ -65,6 +65,16 @@ spec:
                   and the person who owns the provider credential and pays the invoice is
                   the person who edits this object.
                 properties:
+                  defaultCostBudget:
+                    description: |-
+                      DefaultCostBudget is the spend ceiling applied to a grant that does not
+                      ask for a specific one, in US dollars.
+
+                      A decimal string for the same reason the grant's is: no floating-point
+                      field belongs in a custom resource. Unset means grants inherit no cost
+                      ceiling, and the token budget alone applies to them.
+                    pattern: ^[0-9]+\.?[0-9]*$
+                    type: string
                   defaultTokenBudget:
                     description: |-
                       DefaultTokenBudget is the ceiling applied to a grant that does not ask
@@ -79,6 +89,16 @@ spec:
                     format: int64
                     minimum: 1
                     type: integer
+                  maxCostBudget:
+                    description: |-
+                      MaxCostBudget is the most any grant may spend in one window, in US
+                      dollars.
+
+                      The cost half of the same trust boundary MaxTokenBudget draws, and it
+                      clamps rather than rejects for the same reason. Left unset, nothing is
+                      clamped.
+                    pattern: ^[0-9]+\.?[0-9]*$
+                    type: string
                   maxTokenBudget:
                     description: |-
                       MaxTokenBudget is the most any grant may be enforced at.

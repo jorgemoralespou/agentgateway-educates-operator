@@ -65,6 +65,13 @@ const metadataKeyExpiresAt = "expiresAt"
 // window has to travel with the key and be read back through CEL.
 const metadataKeyBudgetWindow = "budgetWindow"
 
+// metadataKeyCostBudget carries the session's spend ceiling, in micro-dollars.
+//
+// Micro-dollars rather than dollars because the protocol field carrying a
+// descriptor's cost is an unsigned integer, so the value the CEL expression
+// compares against has to be a whole number.
+const metadataKeyCostBudget = "costBudget"
+
 // buildRegistration assembles the entry for one session's key registration.
 //
 // Holds the hash, the session name, the token budget and the expiry. No key
@@ -82,23 +89,45 @@ const metadataKeyBudgetWindow = "budgetWindow"
 // without any grant being reconciled or any registration rewritten. Writing the
 // resolved number here instead would freeze it at the moment the grant was
 // last reconciled.
-func buildRegistration(keyHash, sessionName string, tokenBudget *int64, window agentgatewayv1alpha1.BudgetWindow, expiresAt time.Time) registrationEntry {
+// registrationInputs is everything one session's registration carries.
+//
+// A struct rather than a parameter list: four of these are optional or easily
+// transposed, and a positional call would let two same-typed values swap
+// silently.
+type registrationInputs struct {
+	keyHash     string
+	sessionName string
+
+	// tokenBudget is nil when the grant inherits its ceiling.
+	tokenBudget *int64
+
+	// costMicroDollars is nil when no cost ceiling applies.
+	costMicroDollars *int64
+
+	window    agentgatewayv1alpha1.BudgetWindow
+	expiresAt time.Time
+}
+
+func buildRegistration(in registrationInputs) registrationEntry {
 	metadata := map[string]string{
-		metadataKeySession: sessionName,
+		metadataKeySession: in.sessionName,
 		// RFC 3339 in UTC, so the value is unambiguous and CEL can parse
 		// it with timestamp().
-		metadataKeyExpiresAt: expiresAt.UTC().Format(time.RFC3339),
-		// Always written, unlike the budget: the window is a property of the
-		// grant whether or not the ceiling is inherited, and the rate-limit
+		metadataKeyExpiresAt: in.expiresAt.UTC().Format(time.RFC3339),
+		// Always written, unlike the budgets: the window is a property of the
+		// grant whether or not a ceiling is inherited, and the rate-limit
 		// service rejects an empty unit.
-		metadataKeyBudgetWindow: string(window),
+		metadataKeyBudgetWindow: string(in.window),
 	}
-	if tokenBudget != nil {
+	if in.tokenBudget != nil {
 		// A string because agentgateway's metadata is map[string]string. The
 		// policy's CEL converts it back.
-		metadata[metadataKeyTokenBudget] = strconv.FormatInt(*tokenBudget, 10)
+		metadata[metadataKeyTokenBudget] = strconv.FormatInt(*in.tokenBudget, 10)
 	}
-	return registrationEntry{KeyHash: keyHash, Metadata: metadata}
+	if in.costMicroDollars != nil {
+		metadata[metadataKeyCostBudget] = strconv.FormatInt(*in.costMicroDollars, 10)
+	}
+	return registrationEntry{KeyHash: in.keyHash, Metadata: metadata}
 }
 
 // equals reports whether two entries would enforce the same thing.
@@ -131,7 +160,13 @@ func marshalRegistration(entry registrationEntry) (string, error) {
 
 // renderRegistration builds the JSON for one session's key registration.
 func renderRegistration(keyHash, sessionName string, tokenBudget *int64, window agentgatewayv1alpha1.BudgetWindow, expiresAt time.Time) (string, error) {
-	return marshalRegistration(buildRegistration(keyHash, sessionName, tokenBudget, window, expiresAt))
+	return marshalRegistration(buildRegistration(registrationInputs{
+		keyHash:     keyHash,
+		sessionName: sessionName,
+		tokenBudget: tokenBudget,
+		window:      window,
+		expiresAt:   expiresAt,
+	}))
 }
 
 // parseRegistration reads back a registration entry, so a reconcile can tell
