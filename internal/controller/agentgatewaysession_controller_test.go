@@ -654,6 +654,113 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 		})
 	})
 
+	Describe("the budget window", func() {
+		// Before this field existed the window was hourly while the grant
+		// documented a session-lifetime cap, so an attendee in a two-hour
+		// workshop silently received two full budgets.
+		It("defaults to a day, which outlasts a workshop", func() {
+			session := createSession("ws-027")
+
+			Eventually(func() metav1.ConditionStatus {
+				return sessionCondition(session, agentgatewayv1alpha1.ConditionReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			live := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-027",
+			}, live)).To(Succeed())
+			Expect(live.Spec.BudgetWindow).To(Equal(agentgatewayv1alpha1.BudgetWindowDay))
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: testGatewayNamespace, Name: "ws-027-agentgateway",
+			}, cm)).To(Succeed())
+			Expect(parseRegistrationEntry(cm, "ws-027").Metadata).
+				To(HaveKeyWithValue(metadataKeyBudgetWindow, "day"))
+		})
+
+		It("carries a declared window through to the registration", func() {
+			session := &agentgatewayv1alpha1.AgentGatewaySession{
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-028", Namespace: workshopNamespace},
+				Spec: agentgatewayv1alpha1.AgentGatewaySessionSpec{
+					CatalogRef: agentgatewayv1alpha1.CatalogReference{
+						Name: agentgatewayv1alpha1.SingletonName,
+					},
+					TokenBudget:  agentgatewayv1alpha1.TokenBudgetValue(5000),
+					BudgetWindow: agentgatewayv1alpha1.BudgetWindowHour,
+					TTL:          "4h",
+				},
+			}
+			Expect(k8sClient.Create(ctx, session)).To(Succeed())
+
+			Eventually(func() string {
+				cm := &corev1.ConfigMap{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: testGatewayNamespace, Name: "ws-028-agentgateway",
+				}, cm); err != nil {
+					return ""
+				}
+				return parseRegistrationEntry(cm, "ws-028").Metadata[metadataKeyBudgetWindow]
+			}, pollTimeout, pollInterval).Should(Equal("hour"))
+		})
+
+		It("rejects a window that is not a unit the rate limiter accepts", func() {
+			session := &agentgatewayv1alpha1.AgentGatewaySession{
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-029", Namespace: workshopNamespace},
+				Spec: agentgatewayv1alpha1.AgentGatewaySessionSpec{
+					CatalogRef: agentgatewayv1alpha1.CatalogReference{
+						Name: agentgatewayv1alpha1.SingletonName,
+					},
+					BudgetWindow: agentgatewayv1alpha1.BudgetWindow("fortnight"),
+					TTL:          "4h",
+				},
+			}
+			Expect(k8sClient.Create(ctx, session)).NotTo(Succeed())
+		})
+
+		// The two fields answer different questions and must not be entangled:
+		// how long a budget lasts, and how long the key works at all.
+		It("keeps the TTL's own pattern and default, unchanged by the window", func() {
+			session := &agentgatewayv1alpha1.AgentGatewaySession{
+				ObjectMeta: metav1.ObjectMeta{Name: "ws-030", Namespace: workshopNamespace},
+				Spec: agentgatewayv1alpha1.AgentGatewaySessionSpec{
+					CatalogRef: agentgatewayv1alpha1.CatalogReference{
+						Name: agentgatewayv1alpha1.SingletonName,
+					},
+					// A free-form duration the window enum would reject.
+					TTL: "90m",
+				},
+			}
+			Expect(k8sClient.Create(ctx, session)).To(Succeed())
+
+			live := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-030",
+			}, live)).To(Succeed())
+			Expect(live.Spec.TTL).To(Equal("90m"))
+			Expect(live.Spec.BudgetWindow).To(Equal(agentgatewayv1alpha1.BudgetWindowDay),
+				"the window defaults independently of the TTL")
+
+			// And the expiry still follows the TTL, not the window.
+			Eventually(func() *metav1.Time {
+				got := &agentgatewayv1alpha1.AgentGatewaySession{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: workshopNamespace, Name: "ws-030",
+				}, got); err != nil {
+					return nil
+				}
+				return got.Status.ExpiresAt
+			}, pollTimeout, pollInterval).ShouldNot(BeNil())
+
+			got := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-030",
+			}, got)).To(Succeed())
+			Expect(got.Status.ExpiresAt.Sub(got.CreationTimestamp.Time)).
+				To(Equal(90 * time.Minute))
+		})
+	})
+
 	Describe("placement", func() {
 		// Without `namespace: $(workshop_namespace)` the grant lands in the
 		// session namespace, the Secret follows it there, and the attendee's

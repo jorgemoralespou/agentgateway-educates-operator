@@ -121,7 +121,7 @@ func (r *AgentGatewayPlatformReconciler) ensureRateLimitConfig(ctx context.Conte
 		return err
 	}
 
-	config := renderRateLimitConfig(defaultBudgetWindow, defaultBudget)
+	config := renderRateLimitConfig(string(agentgatewayv1alpha1.DefaultBudgetWindow), defaultBudget)
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{

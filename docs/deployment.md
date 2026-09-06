@@ -362,6 +362,35 @@ requested a token budget of 500000, clamped to the catalog maximum of 200000
 The maximum bounds `defaultTokenBudget` too, so you cannot configure a default
 that exceeds your own ceiling. Left unset, nothing is clamped.
 
+### The budget window
+
+A token budget is a ceiling per **window**, not per session lifetime: no
+lifetime-scoped budget exists anywhere in this stack. `budgetWindow` on the
+grant says how long one budget lasts, and defaults to `day`, which outlasts any
+workshop:
+
+```yaml
+spec:
+  tokenBudget: 20000
+  budgetWindow: day     # second, minute, hour, day, month, year
+```
+
+Before this field existed the window was hourly while the field was documented
+as a session-lifetime cap, so an attendee in a two-hour workshop quietly
+received two full budgets.
+
+`budgetWindow` and `ttl` are independent. `ttl` remains the backstop expiry on
+the key itself, keeps its free-form duration (`4h`, `90m`), and is what protects
+you when a force-deleted namespace orphans a registration. Changing one does not
+change the other.
+
+**Windows are aligned to the Unix epoch, not to a session's first request.** A
+daily window resets at midnight UTC, so a workshop running across midnight
+yields two budgets. The guarantee is "at most one reset", not "no reset", and
+`ttl` bounds the exposure because a session past its expiry cannot spend the
+second budget. If a workshop is scheduled across midnight UTC and that matters,
+set a smaller `tokenBudget` or a longer window.
+
 Changing `defaultTokenBudget` takes effect for sessions that are already
 running and did not set a budget of their own. That is not a fan-out across
 grants: a grant that inherits its budget carries none on its key registration,

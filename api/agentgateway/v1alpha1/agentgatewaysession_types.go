@@ -25,7 +25,13 @@ type AgentGatewaySessionSpec struct {
 	// +optional
 	CatalogRef CatalogReference `json:"catalogRef,omitempty"`
 
-	// TokenBudget is the ceiling on LLM tokens for this session.
+	// TokenBudget is the ceiling on LLM tokens for one budget window, which
+	// defaults to a day. See BudgetWindow.
+	//
+	// Not a ceiling for the session's lifetime: no lifetime-scoped budget
+	// exists in this stack. The window is what is actually enforced, and it is
+	// chosen to be longer than a workshop so that in practice one budget covers
+	// one session.
 	//
 	// Measured in tokens rather than requests because cost tracks tokens: one
 	// request with a large context can cost more than a hundred small ones.
@@ -44,6 +50,30 @@ type AgentGatewaySessionSpec struct {
 	// +optional
 	TokenBudget *int64 `json:"tokenBudget,omitempty"`
 
+	// BudgetWindow is how long one token budget lasts before it refills.
+	//
+	// Defaults to a day, which is longer than any workshop, so in practice an
+	// attendee gets one budget for their whole session. Before this field
+	// existed the window was an hour, so an attendee in a two-hour workshop
+	// silently received two full budgets.
+	//
+	// Deliberately separate from TTL, which is the key's expiry backstop and
+	// keeps its own free-form duration. The two answer different questions:
+	// how long a budget lasts, and how long a key works at all. Restricting TTL
+	// to these units was considered and rejected, since it would make the
+	// current default illegal and trade the expiry guarantee for the rate
+	// limiter's vocabulary.
+	//
+	// One residual is accepted rather than engineered around: windows are
+	// aligned to the Unix epoch, not to a session's first request. A daily
+	// window resets at midnight UTC, so a workshop spanning midnight yields two
+	// budgets. The guarantee is "at most one reset", not "no reset", and the
+	// expiry sweep bounds the exposure because a session past its TTL cannot
+	// spend the second budget.
+	// +kubebuilder:default=day
+	// +optional
+	BudgetWindow BudgetWindow `json:"budgetWindow,omitempty"`
+
 	// TTL is a backstop expiry on the participant key, independent of any
 	// cleanup path.
 	//
@@ -55,6 +85,27 @@ type AgentGatewaySessionSpec struct {
 	// +optional
 	TTL string `json:"ttl,omitempty"`
 }
+
+// BudgetWindow is how long one budget lasts before it refills.
+//
+// The legal values are exactly the units the rate-limit service accepts, so
+// what an author writes reaches the descriptor unchanged rather than being
+// translated into a vocabulary the enforcement does not share.
+// +kubebuilder:validation:Enum=second;minute;hour;day;month;year
+type BudgetWindow string
+
+const (
+	BudgetWindowSecond BudgetWindow = "second"
+	BudgetWindowMinute BudgetWindow = "minute"
+	BudgetWindowHour   BudgetWindow = "hour"
+	BudgetWindowDay    BudgetWindow = "day"
+	BudgetWindowMonth  BudgetWindow = "month"
+	BudgetWindowYear   BudgetWindow = "year"
+)
+
+// DefaultBudgetWindow is the window applied when a grant does not set one.
+// Matches the CRD's own default, so the two cannot drift.
+const DefaultBudgetWindow = BudgetWindowDay
 
 // SessionPhase is an advisory summary. Conditions are authoritative.
 // +kubebuilder:validation:Enum=Pending;Ready;Failed;Rejected;Terminating
@@ -225,6 +276,18 @@ func (s *AgentGatewaySession) TokenBudget() int64 {
 		return *s.Spec.TokenBudget
 	}
 	return DefaultTokenBudget
+}
+
+// BudgetWindow returns how long this session's budget lasts, defaulted.
+//
+// Defaulted here as well as in the CRD, so a grant created before the field
+// existed gets the same window as one created after it, rather than an empty
+// unit the rate-limit service would reject.
+func (s *AgentGatewaySession) BudgetWindow() BudgetWindow {
+	if s.Spec.BudgetWindow != "" {
+		return s.Spec.BudgetWindow
+	}
+	return DefaultBudgetWindow
 }
 
 func init() {

@@ -457,7 +457,7 @@ func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, 
 		registered = &budget.Value
 	}
 
-	desiredEntry := buildRegistration(hash, session.Name, registered, expiresAt)
+	desiredEntry := buildRegistration(hash, session.Name, registered, session.BudgetWindow(), expiresAt)
 	payload, err := marshalRegistration(desiredEntry)
 	if err != nil {
 		return err

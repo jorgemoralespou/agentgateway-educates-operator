@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
+	agentgatewayv1alpha1 "github.com/educates/agentgateway-educates-operator/api/agentgateway/v1alpha1"
 )
 
 // registrationEntry is one API key as agentgateway reads it from a ConfigMap.
@@ -56,6 +58,13 @@ const metadataKeyTokenBudget = "tokenBudget"
 // unchanged if agentgateway ever binds a time function.
 const metadataKeyExpiresAt = "expiresAt"
 
+// metadataKeyBudgetWindow carries how long the session's budget lasts.
+//
+// Rides on the registration for the same reason the budget does: the policy is
+// one object cluster-wide and cannot hold a row per attendee, so a per-grant
+// window has to travel with the key and be read back through CEL.
+const metadataKeyBudgetWindow = "budgetWindow"
+
 // buildRegistration assembles the entry for one session's key registration.
 //
 // Holds the hash, the session name, the token budget and the expiry. No key
@@ -73,12 +82,16 @@ const metadataKeyExpiresAt = "expiresAt"
 // without any grant being reconciled or any registration rewritten. Writing the
 // resolved number here instead would freeze it at the moment the grant was
 // last reconciled.
-func buildRegistration(keyHash, sessionName string, tokenBudget *int64, expiresAt time.Time) registrationEntry {
+func buildRegistration(keyHash, sessionName string, tokenBudget *int64, window agentgatewayv1alpha1.BudgetWindow, expiresAt time.Time) registrationEntry {
 	metadata := map[string]string{
 		metadataKeySession: sessionName,
 		// RFC 3339 in UTC, so the value is unambiguous and CEL can parse
 		// it with timestamp().
 		metadataKeyExpiresAt: expiresAt.UTC().Format(time.RFC3339),
+		// Always written, unlike the budget: the window is a property of the
+		// grant whether or not the ceiling is inherited, and the rate-limit
+		// service rejects an empty unit.
+		metadataKeyBudgetWindow: string(window),
 	}
 	if tokenBudget != nil {
 		// A string because agentgateway's metadata is map[string]string. The
@@ -117,8 +130,8 @@ func marshalRegistration(entry registrationEntry) (string, error) {
 }
 
 // renderRegistration builds the JSON for one session's key registration.
-func renderRegistration(keyHash, sessionName string, tokenBudget *int64, expiresAt time.Time) (string, error) {
-	return marshalRegistration(buildRegistration(keyHash, sessionName, tokenBudget, expiresAt))
+func renderRegistration(keyHash, sessionName string, tokenBudget *int64, window agentgatewayv1alpha1.BudgetWindow, expiresAt time.Time) (string, error) {
+	return marshalRegistration(buildRegistration(keyHash, sessionName, tokenBudget, window, expiresAt))
 }
 
 // parseRegistration reads back a registration entry, so a reconcile can tell

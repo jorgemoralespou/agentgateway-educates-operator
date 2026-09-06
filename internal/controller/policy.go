@@ -28,18 +28,19 @@ import (
 // integer here. A registration written by an older operator may not carry the
 // field at all, and a grant that inherits its budget deliberately omits it, so
 // a missing or unparseable value falls back rather than failing the request.
-func tokenBudgetOverride(window string, fallbackBudget int64) string {
-	return `has(apiKey.tokenBudget) ? ` +
-		`{"unit": "` + window + `", "requestsPerUnit": int(apiKey.tokenBudget)} : ` +
-		`{"unit": "` + window + `", "requestsPerUnit": ` + strconv.FormatInt(fallbackBudget, 10) + `}`
-}
-
-// defaultBudgetWindow is the window the policy is rendered with today.
 //
-// Named rather than inline so ticket 06's per-grant window has one place to
-// replace. It is hourly, which is not the session-lifetime cap the grant's
-// documentation claims; that discrepancy is corrected in 06.
-const defaultBudgetWindow = "hour"
+// The window is read off the registration too, so a per-grant window reaches
+// enforcement: the policy is one object cluster-wide and cannot hold a row per
+// attendee. A registration written by an older operator carries no window, so a
+// missing value falls back to the rendered default rather than producing an
+// empty unit the rate-limit service would reject.
+func tokenBudgetOverride(window string, fallbackBudget int64) string {
+	unit := `(has(apiKey.` + metadataKeyBudgetWindow + `) ? ` +
+		`apiKey.` + metadataKeyBudgetWindow + ` : "` + window + `")`
+	return `has(apiKey.tokenBudget) ? ` +
+		`{"unit": ` + unit + `, "requestsPerUnit": int(apiKey.tokenBudget)} : ` +
+		`{"unit": ` + unit + `, "requestsPerUnit": ` + strconv.FormatInt(fallbackBudget, 10) + `}`
+}
 
 // ensurePolicy renders the single API-key policy.
 //
@@ -75,7 +76,7 @@ func (r *AgentGatewayPlatformReconciler) ensurePolicy(ctx context.Context, names
 	}
 
 	spec := renderPolicySpec(failureMode, namespace, requestTimeout,
-		defaultBudgetWindow, fallbackBudget)
+		string(agentgatewayv1alpha1.DefaultBudgetWindow), fallbackBudget)
 
 	live := newPolicy()
 	err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: PolicyName}, live)

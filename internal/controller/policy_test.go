@@ -24,7 +24,7 @@ var _ = Describe("renderPolicySpec", func() {
 		// "upstream call failed: connection closed before message completed",
 		// which reads like a broken gateway rather than a slow model.
 		It("is written when the catalog asks for one", func() {
-			spec := renderPolicySpec(agentgatewayv1alpha1.FailClosed, "agentgateway-system", "180s", defaultBudgetWindow, agentgatewayv1alpha1.DefaultTokenBudget)
+			spec := renderPolicySpec(agentgatewayv1alpha1.FailClosed, "agentgateway-system", "180s", string(agentgatewayv1alpha1.DefaultBudgetWindow), agentgatewayv1alpha1.DefaultTokenBudget)
 
 			timeouts, ok := traffic(spec)["timeouts"].(map[string]any)
 			Expect(ok).To(BeTrue(), "a catalog requestTimeout must reach the policy")
@@ -35,14 +35,14 @@ var _ = Describe("renderPolicySpec", func() {
 		// operator has no opinion about, and would need changing every time
 		// that default moved.
 		It("is absent when the catalog does not ask, leaving agentgateway's default", func() {
-			spec := renderPolicySpec(agentgatewayv1alpha1.FailClosed, "agentgateway-system", "", defaultBudgetWindow, agentgatewayv1alpha1.DefaultTokenBudget)
+			spec := renderPolicySpec(agentgatewayv1alpha1.FailClosed, "agentgateway-system", "", string(agentgatewayv1alpha1.DefaultBudgetWindow), agentgatewayv1alpha1.DefaultTokenBudget)
 
 			Expect(traffic(spec)).NotTo(HaveKey("timeouts"),
 				"an unset timeout must not be written at all")
 		})
 
 		It("does not disturb the rest of the traffic block", func() {
-			spec := renderPolicySpec(agentgatewayv1alpha1.FailOpen, "agentgateway-system", "90s", defaultBudgetWindow, agentgatewayv1alpha1.DefaultTokenBudget)
+			spec := renderPolicySpec(agentgatewayv1alpha1.FailOpen, "agentgateway-system", "90s", string(agentgatewayv1alpha1.DefaultBudgetWindow), agentgatewayv1alpha1.DefaultTokenBudget)
 
 			t := traffic(spec)
 			Expect(t).To(HaveKey("apiKeyAuthentication"))
@@ -70,26 +70,29 @@ var _ = Describe("renderPolicySpec", func() {
 			return override
 		}
 
-		// Pins the prefactor: parameterizing the window and the fallback must
-		// not change a single byte of what the gateway is asked to evaluate.
-		It("is byte-identical to the expression this replaced", func() {
+		// The window is read off each attendee's own registration, because the
+		// policy is one object cluster-wide and cannot hold a row per attendee.
+		It("reads the window off the registration, falling back to the rendered default", func() {
 			spec := renderPolicySpec(agentgatewayv1alpha1.FailClosed, "agentgateway-system", "",
-				defaultBudgetWindow, agentgatewayv1alpha1.DefaultTokenBudget)
+				string(agentgatewayv1alpha1.DefaultBudgetWindow), agentgatewayv1alpha1.DefaultTokenBudget)
 
 			Expect(limitOverride(spec)).To(Equal(
 				`has(apiKey.tokenBudget) ? ` +
-					`{"unit": "hour", "requestsPerUnit": int(apiKey.tokenBudget)} : ` +
-					`{"unit": "hour", "requestsPerUnit": 100000}`))
+					`{"unit": (has(apiKey.budgetWindow) ? apiKey.budgetWindow : "day"), ` +
+					`"requestsPerUnit": int(apiKey.tokenBudget)} : ` +
+					`{"unit": (has(apiKey.budgetWindow) ? apiKey.budgetWindow : "day"), ` +
+					`"requestsPerUnit": 100000}`))
 		})
 
+		// A registration written before the window existed carries none, and
+		// must not produce an empty unit the rate-limit service would reject.
 		It("carries the window and fallback it was given", func() {
 			spec := renderPolicySpec(agentgatewayv1alpha1.FailClosed, "agentgateway-system", "",
-				"day", int64(250000))
+				"hour", int64(250000))
 
-			Expect(limitOverride(spec)).To(Equal(
-				`has(apiKey.tokenBudget) ? ` +
-					`{"unit": "day", "requestsPerUnit": int(apiKey.tokenBudget)} : ` +
-					`{"unit": "day", "requestsPerUnit": 250000}`))
+			Expect(limitOverride(spec)).To(ContainSubstring(`: "hour")`),
+				"the rendered default is the fallback for a registration with no window")
+			Expect(limitOverride(spec)).To(ContainSubstring(`"requestsPerUnit": 250000`))
 		})
 	})
 
@@ -98,7 +101,7 @@ var _ = Describe("renderPolicySpec", func() {
 		// own namespace, which is the whole reason registrations cannot live
 		// beside the attendee's pod (ADR-0002).
 		It("names the Gateway this operator creates", func() {
-			spec := renderPolicySpec(agentgatewayv1alpha1.FailClosed, "agentgateway-system", "", defaultBudgetWindow, agentgatewayv1alpha1.DefaultTokenBudget)
+			spec := renderPolicySpec(agentgatewayv1alpha1.FailClosed, "agentgateway-system", "", string(agentgatewayv1alpha1.DefaultBudgetWindow), agentgatewayv1alpha1.DefaultTokenBudget)
 
 			refs, ok := spec["targetRefs"].([]any)
 			Expect(ok).To(BeTrue())

@@ -63,12 +63,12 @@ func TestRateLimitRowMatchesPolicyFallback(t *testing.T) {
 		},
 	}
 
-	config := renderRateLimitConfig(defaultBudgetWindow, catalog.EffectiveDefaultTokenBudget())
+	config := renderRateLimitConfig(string(agentgatewayv1alpha1.DefaultBudgetWindow), catalog.EffectiveDefaultTokenBudget())
 	if !strings.Contains(config, "requests_per_unit: 40000") {
 		t.Errorf("the descriptor row must carry the catalog's default:\n%s", config)
 	}
 
-	override := tokenBudgetOverride(defaultBudgetWindow, catalog.EffectiveDefaultTokenBudget())
+	override := tokenBudgetOverride(string(agentgatewayv1alpha1.DefaultBudgetWindow), catalog.EffectiveDefaultTokenBudget())
 	if !strings.Contains(override, "40000") {
 		t.Errorf("the policy fallback must carry the same default: %s", override)
 	}
