@@ -540,6 +540,120 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 		})
 	})
 
+	Describe("the catalog's maximum budget", func() {
+		// The trust boundary: the person who owns the provider credential and
+		// pays for it decides the ceiling, and a workshop author writing
+		// session.objects cannot exceed it.
+		It("clamps a grant that asks for more, and still becomes Ready", func() {
+			setCatalogBudgets(&agentgatewayv1alpha1.BudgetSpec{
+				MaxTokenBudget: agentgatewayv1alpha1.TokenBudgetValue(20000),
+			})
+			session := createSession("ws-022") // asks for 100000
+
+			// Ready, not rejected: rejecting would fail every attendee's
+			// session at start, where clamping means the workshop still runs.
+			Eventually(func() metav1.ConditionStatus {
+				return sessionCondition(session, agentgatewayv1alpha1.ConditionReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			got := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-022",
+			}, got)).To(Succeed())
+			Expect(got.Status.EffectiveTokenBudget).To(Equal(int64(20000)))
+
+			// And the gateway enforces the clamped value, not the requested one.
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: testGatewayNamespace, Name: "ws-022-agentgateway",
+			}, cm)).To(Succeed())
+			Expect(parseRegistrationEntry(cm, "ws-022").Metadata).
+				To(HaveKeyWithValue(metadataKeyTokenBudget, "20000"))
+		})
+
+		// Visible, or an author spends a workshop wondering why attendees hit a
+		// limit earlier than they planned for.
+		It("reports the clamp on the grant's status", func() {
+			setCatalogBudgets(&agentgatewayv1alpha1.BudgetSpec{
+				MaxTokenBudget: agentgatewayv1alpha1.TokenBudgetValue(20000),
+			})
+			session := createSession("ws-023")
+
+			Eventually(func() metav1.ConditionStatus {
+				return sessionCondition(session, agentgatewayv1alpha1.ConditionBudgetWithinLimits)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionFalse))
+
+			got := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-023",
+			}, got)).To(Succeed())
+
+			var clamp *metav1.Condition
+			for i := range got.Status.Conditions {
+				if got.Status.Conditions[i].Type == agentgatewayv1alpha1.ConditionBudgetWithinLimits {
+					clamp = &got.Status.Conditions[i]
+				}
+			}
+			Expect(clamp).NotTo(BeNil())
+			Expect(clamp.Reason).To(Equal(agentgatewayv1alpha1.ReasonBudgetClamped))
+			// Both numbers named, so the author can see what they asked for.
+			Expect(clamp.Message).To(ContainSubstring("100000"))
+			Expect(clamp.Message).To(ContainSubstring("20000"))
+		})
+
+		It("leaves a grant at or below the maximum alone", func() {
+			setCatalogBudgets(&agentgatewayv1alpha1.BudgetSpec{
+				MaxTokenBudget: agentgatewayv1alpha1.TokenBudgetValue(100000),
+			})
+			session := createSession("ws-024") // asks for exactly 100000
+
+			Eventually(func() metav1.ConditionStatus {
+				return sessionCondition(session, agentgatewayv1alpha1.ConditionBudgetWithinLimits)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			got := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-024",
+			}, got)).To(Succeed())
+			Expect(got.Status.EffectiveTokenBudget).To(Equal(int64(100000)))
+		})
+
+		It("clamps nothing when the catalog sets no maximum", func() {
+			setCatalogBudgets(nil)
+			session := createSession("ws-025")
+
+			Eventually(func() metav1.ConditionStatus {
+				return sessionCondition(session, agentgatewayv1alpha1.ConditionBudgetWithinLimits)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			got := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-025",
+			}, got)).To(Succeed())
+			Expect(got.Status.EffectiveTokenBudget).To(Equal(int64(100000)))
+		})
+
+		// An operator cannot configure a default that exceeds their own
+		// ceiling, so the row inheriting grants land on stays within it.
+		It("bounds the catalog's own default by the maximum", func() {
+			setCatalogBudgets(&agentgatewayv1alpha1.BudgetSpec{
+				DefaultTokenBudget: agentgatewayv1alpha1.TokenBudgetValue(500000),
+				MaxTokenBudget:     agentgatewayv1alpha1.TokenBudgetValue(30000),
+			})
+			createSessionWithout("ws-026")
+
+			Eventually(func() int64 {
+				got := &agentgatewayv1alpha1.AgentGatewaySession{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: workshopNamespace, Name: "ws-026",
+				}, got); err != nil {
+					return 0
+				}
+				return got.Status.EffectiveTokenBudget
+			}, pollTimeout, pollInterval).Should(Equal(int64(30000)))
+		})
+	})
+
 	Describe("placement", func() {
 		// Without `namespace: $(workshop_namespace)` the grant lands in the
 		// session namespace, the Secret follows it there, and the attendee's

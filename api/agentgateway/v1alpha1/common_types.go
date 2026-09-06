@@ -61,6 +61,17 @@ const (
 	// namespace where the resulting Secret is reachable by the attendee's pod.
 	// A grant in a session namespace is rejected here rather than reconciled.
 	ConditionPlacementValid = "PlacementValid"
+
+	// ConditionBudgetWithinLimits reports whether the grant is enforced at the
+	// budget it asked for. False means the catalog's maximum brought it down.
+	//
+	// A condition rather than a rejection: the grant still becomes Ready and
+	// the workshop still runs, at a budget the cluster operator is willing to
+	// pay for. Rejecting instead would fail every attendee's session at start.
+	// It is reported so an author can see their requested value did not
+	// survive, rather than spending a workshop wondering why attendees hit a
+	// limit earlier than planned.
+	ConditionBudgetWithinLimits = "BudgetWithinLimits"
 )
 
 // ConditionReady is the summary condition on every kind in this group, set last.
@@ -79,4 +90,5 @@ const (
 	ReasonInstalling          = "Installing"
 	ReasonUninstalling        = "Uninstalling"
 	ReasonCustomResourceKinds = "CustomResourceKindsMissing"
+	ReasonBudgetClamped       = "BudgetClamped"
 )

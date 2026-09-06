@@ -337,6 +337,7 @@ metadata:
 spec:
   budgets:
     defaultTokenBudget: 50000
+    maxTokenBudget: 200000
   models:
     - name: fast
       # ...
@@ -344,6 +345,22 @@ spec:
 
 With no `budgets` block at all, the built-in default of 100000 tokens applies,
 so a catalog written before this block existed behaves exactly as it did.
+
+`maxTokenBudget` is the trust boundary: the person who owns the provider
+credential and pays for it decides the ceiling, and a workshop author writing
+`session.objects` cannot exceed it. A grant asking for more is **clamped, not
+rejected**, because rejecting would fail every attendee's session at start,
+where clamping means the workshop still runs at a budget you are willing to pay
+for. The clamp is visible on the grant:
+
+```console
+$ kubectl get agentgatewaysession ws-001 -n educates-labs-w01 \
+    -o jsonpath='{range .status.conditions[?(@.type=="BudgetWithinLimits")]}{.message}{"\n"}{end}'
+requested a token budget of 500000, clamped to the catalog maximum of 200000
+```
+
+The maximum bounds `defaultTokenBudget` too, so you cannot configure a default
+that exceeds your own ceiling. Left unset, nothing is clamped.
 
 Changing `defaultTokenBudget` takes effect for sessions that are already
 running and did not set a budget of their own. That is not a fan-out across

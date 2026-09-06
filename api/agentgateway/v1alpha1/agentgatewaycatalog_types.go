@@ -137,6 +137,25 @@ type BudgetSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	DefaultTokenBudget *int64 `json:"defaultTokenBudget,omitempty"`
+
+	// MaxTokenBudget is the most any grant may be enforced at.
+	//
+	// This is the trust boundary: the person who owns the provider credential
+	// and pays for it decides the ceiling, and a workshop author writing
+	// session.objects cannot exceed it.
+	//
+	// A grant asking for more is clamped, not rejected. Rejecting would fail
+	// every attendee's session at start, where clamping means the workshop
+	// still runs, at a budget the operator is willing to pay for. The clamp is
+	// reported on the grant's status so an author can see their requested value
+	// did not survive, rather than spending a workshop wondering why attendees
+	// hit a limit earlier than planned.
+	//
+	// Left unset, nothing is clamped, so this stays opt-in for operators who do
+	// not need it.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MaxTokenBudget *int64 `json:"maxTokenBudget,omitempty"`
 }
 
 // CatalogPhase is an advisory summary. Conditions are authoritative.

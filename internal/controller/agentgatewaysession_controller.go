@@ -145,7 +145,25 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 	// Resolved once, so the ceiling the gateway enforces and the one status
 	// reports cannot disagree.
 	budget := agentgatewayv1alpha1.ResolveTokenBudget(
-		session.Spec.TokenBudget, catalog.catalogDefaultTokenBudget())
+		session.Spec.TokenBudget,
+		catalog.catalogDefaultTokenBudget(),
+		catalog.catalogMaxTokenBudget())
+
+	// Clamping is reported rather than rejected: the grant still becomes Ready
+	// and the workshop still runs, at a budget the cluster operator is willing
+	// to pay for.
+	if budget.Clamped {
+		setCondition(&session.Status.Conditions, session.Generation,
+			agentgatewayv1alpha1.ConditionBudgetWithinLimits, metav1.ConditionFalse,
+			agentgatewayv1alpha1.ReasonBudgetClamped,
+			fmt.Sprintf("requested a token budget of %d, clamped to the catalog maximum of %d",
+				budget.Requested, budget.Value))
+	} else {
+		setCondition(&session.Status.Conditions, session.Generation,
+			agentgatewayv1alpha1.ConditionBudgetWithinLimits, metav1.ConditionTrue,
+			agentgatewayv1alpha1.ReasonReady,
+			fmt.Sprintf("enforced at a token budget of %d", budget.Value))
+	}
 
 	// The registration carries the hash, the budget and the expiry, never key
 	// material. A lost Secret is repaired by generating a new key and updating
@@ -282,6 +300,15 @@ func (c resolvedCatalog) catalogDefaultTokenBudget() *int64 {
 		return nil
 	}
 	return c.budgets.DefaultTokenBudget
+}
+
+// catalogMaxTokenBudget is the cluster-wide ceiling, or nil when none is
+// imposed.
+func (c resolvedCatalog) catalogMaxTokenBudget() *int64 {
+	if c.budgets == nil {
+		return nil
+	}
+	return c.budgets.MaxTokenBudget
 }
 
 // ensureSecret returns the attendee's key, generating one only when the Secret
