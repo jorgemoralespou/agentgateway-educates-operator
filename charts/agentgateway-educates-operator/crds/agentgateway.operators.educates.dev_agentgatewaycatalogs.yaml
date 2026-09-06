@@ -55,6 +55,31 @@ spec:
           spec:
             description: AgentGatewayCatalogSpec declares the models the Gateway offers.
             properties:
+              budgets:
+                description: |-
+                  Budgets declares the cluster-wide budget policy every grant inherits
+                  from.
+
+                  On the catalog for the same reason the rate-limit failure mode is: it is
+                  a choice about serving LLM traffic, which is what the catalog governs,
+                  and the person who owns the provider credential and pays the invoice is
+                  the person who edits this object.
+                properties:
+                  defaultTokenBudget:
+                    description: |-
+                      DefaultTokenBudget is the ceiling applied to a grant that does not ask
+                      for a specific one.
+
+                      Changing it takes effect for running sessions that set no budget of
+                      their own, without any grant being reconciled. That falls out of how the
+                      value reaches the gateway rather than from a watch: an inheriting grant's
+                      registration carries no budget metadata at all, so the gateway falls
+                      through to the descriptor row in the shared rate-limit configuration,
+                      and this field is what renders that row.
+                    format: int64
+                    minimum: 1
+                    type: integer
+                type: object
               models:
                 description: |-
                   Models is the flat list of models workshops may use.

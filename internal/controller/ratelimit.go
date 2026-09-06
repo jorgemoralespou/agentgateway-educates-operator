@@ -97,22 +97,31 @@ func (r *AgentGatewayPlatformReconciler) reconcileRateLimit(ctx context.Context,
 // The descriptor here must match the one in the policy: the policy names the
 // domain and the descriptor key, and this file declares that the key exists.
 //
-// The value below is only a fallback. A shared config file cannot hold a row
-// per attendee: that is exactly the contention the one-registration-per-session
-// design avoids, so the real per-session ceiling travels on each key's own
-// registration and reaches the service through the policy's limitOverride
-// (ADR-0003). This entry applies only to a request whose registration carries no
-// budget, which should not happen, and is deliberately equal to the default
-// budget rather than something permissive: a key with no budget should be
-// treated as an ordinary attendee, not an unlimited one.
+// A shared config file cannot hold a row per attendee: that is exactly the
+// contention the one-registration-per-session design avoids, so a grant that
+// asks for a specific ceiling carries it on its own registration and reaches
+// the service through the policy's limitOverride (ADR-0003).
+//
+// This row is what every *other* grant is enforced at. A grant that names no
+// budget registers none, so the gateway falls through to here, which is what
+// makes the catalog's default live: editing the catalog rewrites this one
+// ConfigMap and every inheriting session follows, with no grant reconciled and
+// no registration rewritten. With no catalog default configured the row is the
+// built-in constant, so a key with no budget is treated as an ordinary
+// attendee rather than an unlimited one.
 func (r *AgentGatewayPlatformReconciler) ensureRateLimitConfig(ctx context.Context, platform *agentgatewayv1alpha1.AgentGatewayPlatform, namespace string) error {
-	config := fmt.Sprintf(`domain: %s
-descriptors:
-  - key: %s
-    rate_limit:
-      unit: hour
-      requests_per_unit: %d
-`, RateLimitDomain, metadataKeySession, agentgatewayv1alpha1.DefaultTokenBudget)
+	// Read across rather than passed in, as the policy's failure mode is: a
+	// catalog that does not exist yet leaves the built-in constant in place,
+	// and the catalog controller re-renders this when it becomes ready.
+	defaultBudget := agentgatewayv1alpha1.DefaultTokenBudget
+	catalog := &agentgatewayv1alpha1.AgentGatewayCatalog{}
+	if err := r.Get(ctx, types.NamespacedName{Name: agentgatewayv1alpha1.SingletonName}, catalog); err == nil {
+		defaultBudget = catalog.EffectiveDefaultTokenBudget()
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	config := renderRateLimitConfig(defaultBudgetWindow, defaultBudget)
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -125,6 +134,20 @@ descriptors:
 	return r.applyOwned(ctx, platform, cm, func(live client.Object) {
 		live.(*corev1.ConfigMap).Data = cm.Data
 	})
+}
+
+// renderRateLimitConfig builds the rate-limit service's domain configuration.
+//
+// A pure function so the descriptor row, which decides what every inheriting
+// grant is enforced at, can be asserted without an API server.
+func renderRateLimitConfig(window string, defaultBudget int64) string {
+	return fmt.Sprintf(`domain: %s
+descriptors:
+  - key: %s
+    rate_limit:
+      unit: %s
+      requests_per_unit: %d
+`, RateLimitDomain, metadataKeySession, window, defaultBudget)
 }
 
 // ensureRedis renders the counter store, deliberately without persistence.

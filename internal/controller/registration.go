@@ -65,19 +65,27 @@ const metadataKeyExpiresAt = "expiresAt"
 // Split from the marshalling so a reconcile can compare the entry it wants
 // against the entry already published, rather than comparing serialized JSON
 // whose key order is an implementation detail of the marshaller.
-func buildRegistration(keyHash, sessionName string, tokenBudget int64, expiresAt time.Time) registrationEntry {
-	return registrationEntry{
-		KeyHash: keyHash,
-		Metadata: map[string]string{
-			metadataKeySession: sessionName,
-			// Strings because agentgateway's metadata is map[string]string.
-			// The policy's CEL converts them back.
-			metadataKeyTokenBudget: strconv.FormatInt(tokenBudget, 10),
-			// RFC 3339 in UTC, so the value is unambiguous and CEL can parse
-			// it with timestamp().
-			metadataKeyExpiresAt: expiresAt.UTC().Format(time.RFC3339),
-		},
+//
+// A nil tokenBudget writes no budget metadata at all. That is the mechanism by
+// which a grant inherits the cluster-wide default: with the field absent, the
+// policy's limit override falls through to the shared descriptor row, so an
+// operator editing the catalog changes what a running session is enforced at
+// without any grant being reconciled or any registration rewritten. Writing the
+// resolved number here instead would freeze it at the moment the grant was
+// last reconciled.
+func buildRegistration(keyHash, sessionName string, tokenBudget *int64, expiresAt time.Time) registrationEntry {
+	metadata := map[string]string{
+		metadataKeySession: sessionName,
+		// RFC 3339 in UTC, so the value is unambiguous and CEL can parse
+		// it with timestamp().
+		metadataKeyExpiresAt: expiresAt.UTC().Format(time.RFC3339),
 	}
+	if tokenBudget != nil {
+		// A string because agentgateway's metadata is map[string]string. The
+		// policy's CEL converts it back.
+		metadata[metadataKeyTokenBudget] = strconv.FormatInt(*tokenBudget, 10)
+	}
+	return registrationEntry{KeyHash: keyHash, Metadata: metadata}
 }
 
 // equals reports whether two entries would enforce the same thing.
@@ -109,7 +117,7 @@ func marshalRegistration(entry registrationEntry) (string, error) {
 }
 
 // renderRegistration builds the JSON for one session's key registration.
-func renderRegistration(keyHash, sessionName string, tokenBudget int64, expiresAt time.Time) (string, error) {
+func renderRegistration(keyHash, sessionName string, tokenBudget *int64, expiresAt time.Time) (string, error) {
 	return marshalRegistration(buildRegistration(keyHash, sessionName, tokenBudget, expiresAt))
 }
 

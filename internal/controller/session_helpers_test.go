@@ -90,6 +90,37 @@ func createReadyCatalog() {
 	Expect(k8sClient.Status().Update(ctx, live)).To(Succeed())
 }
 
+// setCatalogBudgets puts a budget policy on the ready catalog, the way a
+// cluster operator editing the singleton does.
+func setCatalogBudgets(budgets *agentgatewayv1alpha1.BudgetSpec) {
+	GinkgoHelper()
+
+	live := &agentgatewayv1alpha1.AgentGatewayCatalog{}
+	Expect(k8sClient.Get(ctx,
+		types.NamespacedName{Name: agentgatewayv1alpha1.SingletonName}, live)).To(Succeed())
+	live.Spec.Budgets = budgets
+	Expect(k8sClient.Update(ctx, live)).To(Succeed())
+}
+
+// createSessionWithout creates a grant that leaves the token budget out
+// entirely, which is what a workshop author inheriting the cluster default
+// writes.
+func createSessionWithout(name string) *agentgatewayv1alpha1.AgentGatewaySession {
+	GinkgoHelper()
+
+	session := &agentgatewayv1alpha1.AgentGatewaySession{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: workshopNamespace},
+		Spec: agentgatewayv1alpha1.AgentGatewaySessionSpec{
+			CatalogRef: agentgatewayv1alpha1.CatalogReference{
+				Name: agentgatewayv1alpha1.SingletonName,
+			},
+			TTL: "4h",
+		},
+	}
+	Expect(k8sClient.Create(ctx, session)).To(Succeed())
+	return session
+}
+
 // createSession creates a grant in the workshop namespace, the way a correctly
 // written workshop definition does.
 func createSession(name string) *agentgatewayv1alpha1.AgentGatewaySession {

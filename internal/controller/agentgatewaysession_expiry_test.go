@@ -7,6 +7,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	agentgatewayv1alpha1 "github.com/educates/agentgateway-educates-operator/api/agentgateway/v1alpha1"
 )
 
 // The TTL is the only protection when a namespace is force-deleted: finalizers
@@ -16,7 +18,7 @@ import (
 func registrationFor(t *testing.T, session string, expiresAt time.Time) *corev1.ConfigMap {
 	t.Helper()
 
-	payload, err := renderRegistration("sha256:abc", session, 1000, expiresAt)
+	payload, err := renderRegistration("sha256:abc", session, agentgatewayv1alpha1.TokenBudgetValue(1000), expiresAt)
 	if err != nil {
 		t.Fatalf("renderRegistration() error: %v", err)
 	}
@@ -113,11 +115,11 @@ func TestExpiredKeepsARegistrationWithAnyLiveEntry(t *testing.T) {
 	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 	sweeper := &ExpirySweeper{}
 
-	expired, err := renderRegistration("sha256:a", "ws-old", 1000, now.Add(-time.Hour))
+	expired, err := renderRegistration("sha256:a", "ws-old", agentgatewayv1alpha1.TokenBudgetValue(1000), now.Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("renderRegistration() error: %v", err)
 	}
-	live, err := renderRegistration("sha256:b", "ws-new", 1000, now.Add(time.Hour))
+	live, err := renderRegistration("sha256:b", "ws-new", agentgatewayv1alpha1.TokenBudgetValue(1000), now.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("renderRegistration() error: %v", err)
 	}

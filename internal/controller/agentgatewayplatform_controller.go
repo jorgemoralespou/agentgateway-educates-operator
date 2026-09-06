@@ -612,7 +612,11 @@ func (r *AgentGatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) erro
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&corev1.Namespace{}).
 		// The policy this controller renders takes its failureMode from the
-		// catalog, so a catalog change has to wake it.
+		// catalog, and the rate-limit configuration takes the default token
+		// budget from it, so a catalog change has to wake it. That watch is
+		// what makes an edited default reach running sessions: one ConfigMap
+		// is rewritten and every inheriting grant follows, with no grant
+		// reconciled.
 		Watches(&agentgatewayv1alpha1.AgentGatewayCatalog{},
 			handler.EnqueueRequestsFromMapFunc(mapCatalogToPlatform)).
 		Named("agentgatewayplatform").

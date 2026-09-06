@@ -93,6 +93,16 @@ type AgentGatewayCatalogSpec struct {
 	// +optional
 	RateLimit *RateLimitSpec `json:"rateLimit,omitempty"`
 
+	// Budgets declares the cluster-wide budget policy every grant inherits
+	// from.
+	//
+	// On the catalog for the same reason the rate-limit failure mode is: it is
+	// a choice about serving LLM traffic, which is what the catalog governs,
+	// and the person who owns the provider credential and pays the invoice is
+	// the person who edits this object.
+	// +optional
+	Budgets *BudgetSpec `json:"budgets,omitempty"`
+
 	// RequestTimeout is how long the gateway waits for a complete response from
 	// an upstream model.
 	//
@@ -107,6 +117,26 @@ type AgentGatewayCatalogSpec struct {
 	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$`
 	// +optional
 	RequestTimeout string `json:"requestTimeout,omitempty"`
+}
+
+// BudgetSpec is the cluster-wide budget policy grants inherit from.
+//
+// Every field is optional and absent means "no opinion", so a catalog that
+// declares no budgets behaves exactly as one written before this block
+// existed.
+type BudgetSpec struct {
+	// DefaultTokenBudget is the ceiling applied to a grant that does not ask
+	// for a specific one.
+	//
+	// Changing it takes effect for running sessions that set no budget of
+	// their own, without any grant being reconciled. That falls out of how the
+	// value reaches the gateway rather than from a watch: an inheriting grant's
+	// registration carries no budget metadata at all, so the gateway falls
+	// through to the descriptor row in the shared rate-limit configuration,
+	// and this field is what renders that row.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	DefaultTokenBudget *int64 `json:"defaultTokenBudget,omitempty"`
 }
 
 // CatalogPhase is an advisory summary. Conditions are authoritative.

@@ -93,7 +93,7 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 
 	// Resolve the catalog, which is also how the gateway address is learned,
 	// read from the platform's status, never reconstructed.
-	gatewayURL, gatewayNamespace, ready, err := r.resolveCatalog(ctx, session)
+	catalog, ready, err := r.resolveCatalog(ctx, session)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -117,7 +117,7 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 	// it does not. Generating on every pass would rotate a live attendee out of
 	// their session mid-workshop: the create-only defect inherited from the
 	// prior art, in reverse.
-	key, generated, err := r.ensureSecret(ctx, session, gatewayURL)
+	key, generated, err := r.ensureSecret(ctx, session, catalog.gatewayURL)
 	if err != nil {
 		setCondition(&session.Status.Conditions, session.Generation,
 			agentgatewayv1alpha1.ConditionSecretWritten, metav1.ConditionFalse,
@@ -142,10 +142,15 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 	// expiry an operator reads is the one the gateway actually enforces.
 	expiresAt := r.expiryFor(session)
 
+	// Resolved once, so the ceiling the gateway enforces and the one status
+	// reports cannot disagree.
+	budget := agentgatewayv1alpha1.ResolveTokenBudget(
+		session.Spec.TokenBudget, catalog.catalogDefaultTokenBudget())
+
 	// The registration carries the hash, the budget and the expiry, never key
 	// material. A lost Secret is repaired by generating a new key and updating
 	// the registration, which makes rotation the recovery path (ADR-0004).
-	if err := r.ensureRegistration(ctx, session, gatewayNamespace, key, expiresAt); err != nil {
+	if err := r.ensureRegistration(ctx, session, catalog.gatewayNamespace, key, expiresAt, budget); err != nil {
 		setCondition(&session.Status.Conditions, session.Generation,
 			agentgatewayv1alpha1.ConditionKeyRegistered, metav1.ConditionFalse,
 			agentgatewayv1alpha1.ReasonFailed, err.Error())
@@ -159,14 +164,15 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 	setCondition(&session.Status.Conditions, session.Generation,
 		agentgatewayv1alpha1.ConditionKeyRegistered, metav1.ConditionTrue,
 		agentgatewayv1alpha1.ReasonReady,
-		fmt.Sprintf("key registered in %s", gatewayNamespace))
+		fmt.Sprintf("key registered in %s", catalog.gatewayNamespace))
 
 	// Status carries the Secret name and the gateway URL so the wiring can be
 	// checked by hand, and never the key or its hash, so it is safe to paste
 	// into a support conversation.
 	session.Status.SecretRef = &agentgatewayv1alpha1.SecretReference{Name: session.ResourceName()}
-	session.Status.GatewayURL = gatewayURL
+	session.Status.GatewayURL = catalog.gatewayURL
 	session.Status.ExpiresAt = &metav1.Time{Time: expiresAt}
+	session.Status.EffectiveTokenBudget = budget.Value
 	session.Status.Phase = agentgatewayv1alpha1.SessionReady
 
 	setCondition(&session.Status.Conditions, session.Generation,
@@ -220,17 +226,33 @@ func (r *AgentGatewaySessionReconciler) reject(ctx context.Context, session *age
 	return ctrl.Result{}, r.updateSessionStatus(ctx, session)
 }
 
-// resolveCatalog finds the catalog and, through it, the gateway address.
-func (r *AgentGatewaySessionReconciler) resolveCatalog(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession) (gatewayURL, gatewayNamespace string, ready bool, err error) {
+// resolvedCatalog is what one reconcile needs from the catalog and platform.
+//
+// Carried as a struct rather than as a growing tuple: the budget policy is
+// read off the same object as the gateway address, and fetching it twice would
+// let one reconcile resolve a budget against a catalog it did not use to
+// resolve the address.
+type resolvedCatalog struct {
+	gatewayURL       string
+	gatewayNamespace string
+
+	// budgets is the cluster-wide policy grants inherit from, nil when the
+	// catalog declares none.
+	budgets *agentgatewayv1alpha1.BudgetSpec
+}
+
+// resolveCatalog finds the catalog and, through it, the gateway address and the
+// budget policy.
+func (r *AgentGatewaySessionReconciler) resolveCatalog(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession) (resolved resolvedCatalog, ready bool, err error) {
 	catalog := &agentgatewayv1alpha1.AgentGatewayCatalog{}
 	if err := r.Get(ctx, types.NamespacedName{Name: session.CatalogName()}, catalog); err != nil {
 		if apierrors.IsNotFound(err) {
-			return "", "", false, nil
+			return resolvedCatalog{}, false, nil
 		}
-		return "", "", false, err
+		return resolvedCatalog{}, false, err
 	}
 	if !conditionTrue(catalog.Status.Conditions, agentgatewayv1alpha1.ConditionReady) {
-		return "", "", false, nil
+		return resolvedCatalog{}, false, nil
 	}
 
 	// The gateway namespace comes from the platform, which is where the
@@ -238,15 +260,28 @@ func (r *AgentGatewaySessionReconciler) resolveCatalog(ctx context.Context, sess
 	platform := &agentgatewayv1alpha1.AgentGatewayPlatform{}
 	if err := r.Get(ctx, types.NamespacedName{Name: agentgatewayv1alpha1.SingletonName}, platform); err != nil {
 		if apierrors.IsNotFound(err) {
-			return "", "", false, nil
+			return resolvedCatalog{}, false, nil
 		}
-		return "", "", false, err
+		return resolvedCatalog{}, false, err
 	}
 	if platform.Status.GatewayNamespace == "" {
-		return "", "", false, nil
+		return resolvedCatalog{}, false, nil
 	}
 
-	return catalog.Status.GatewayURL, platform.Status.GatewayNamespace, true, nil
+	return resolvedCatalog{
+		gatewayURL:       catalog.Status.GatewayURL,
+		gatewayNamespace: platform.Status.GatewayNamespace,
+		budgets:          catalog.Spec.Budgets,
+	}, true, nil
+}
+
+// catalogDefaultTokenBudget is the cluster-wide default, or nil when none is
+// declared.
+func (c resolvedCatalog) catalogDefaultTokenBudget() *int64 {
+	if c.budgets == nil {
+		return nil
+	}
+	return c.budgets.DefaultTokenBudget
 }
 
 // ensureSecret returns the attendee's key, generating one only when the Secret
@@ -382,11 +417,20 @@ func (r *AgentGatewaySessionReconciler) sessionNamespaceName(session *agentgatew
 // attendee: thirty concurrent workshop starts would otherwise contend on a
 // single hot object, and duplicate keys across ConfigMaps are documented
 // upstream as undefined.
-func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession, gatewayNamespace, key string, expiresAt time.Time) error {
+func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession, gatewayNamespace, key string, expiresAt time.Time, budget agentgatewayv1alpha1.ResolvedTokenBudget) error {
 	name := session.ResourceName()
 	hash := participantkey.Hash(key)
 
-	desiredEntry := buildRegistration(hash, session.Name, session.TokenBudget(), expiresAt)
+	// An inherited budget is written as no budget at all, so the gateway falls
+	// through to the shared descriptor row and a later catalog edit reaches
+	// this session without it being reconciled. Only a budget the grant asked
+	// for itself is pinned onto the registration.
+	var registered *int64
+	if !budget.Inherited {
+		registered = &budget.Value
+	}
+
+	desiredEntry := buildRegistration(hash, session.Name, registered, expiresAt)
 	payload, err := marshalRegistration(desiredEntry)
 	if err != nil {
 		return err

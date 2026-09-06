@@ -315,9 +315,51 @@ only resolves within its own namespace. The operator rejects a misplaced grant
 with `PlacementValid=False` and a message naming the fix, rather than failing
 silently.
 
-`tokenBudget` defaults to 100000 and `ttl` to `4h`.
+`ttl` defaults to `4h`.
+
+`tokenBudget` is an override, not a setting. Leave it out and the session
+inherits whatever the cluster operator configured on the catalog, so the
+workshop follows the cluster rather than freezing a number into the workshop
+definition. See [Budgets](#budgets) below.
 
 A complete working example is in [`sample-workshop/`](../sample-workshop/).
+
+## Budgets
+
+The cluster operator declares the ordinary budget once, on the catalog, and
+every grant that does not ask for something specific inherits it:
+
+```yaml
+apiVersion: agentgateway.operators.educates.dev/v1alpha1
+kind: AgentGatewayCatalog
+metadata:
+  name: cluster
+spec:
+  budgets:
+    defaultTokenBudget: 50000
+  models:
+    - name: fast
+      # ...
+```
+
+With no `budgets` block at all, the built-in default of 100000 tokens applies,
+so a catalog written before this block existed behaves exactly as it did.
+
+Changing `defaultTokenBudget` takes effect for sessions that are already
+running and did not set a budget of their own. That is not a fan-out across
+grants: a grant that inherits its budget carries none on its key registration,
+so the gateway falls through to the shared rate-limit configuration, and only
+that one object is rewritten.
+
+The consequence worth knowing: an inheriting grant's registration does not show
+what it is enforced at. Read the grant's status instead, which reports the
+resolved value:
+
+```console
+$ kubectl get agentgatewaysession ws-001 -n educates-labs-w01 \
+    -o jsonpath='{.status.effectiveTokenBudget}{"\n"}'
+50000
+```
 
 ## Exposing the gateway UI
 

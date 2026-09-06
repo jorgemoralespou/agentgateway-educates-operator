@@ -58,19 +58,24 @@ func (r *AgentGatewayPlatformReconciler) ensurePolicy(ctx context.Context, names
 	// controller re-renders the policy when it becomes ready.
 	failureMode := agentgatewayv1alpha1.FailClosed
 	requestTimeout := ""
+	// The fallback traces to the shared constant rather than a literal, so the
+	// value the policy falls back to and the value the accessor defaults to
+	// cannot drift apart.
+	fallbackBudget := agentgatewayv1alpha1.DefaultTokenBudget
 	catalog := &agentgatewayv1alpha1.AgentGatewayCatalog{}
 	if err := r.Get(ctx, types.NamespacedName{Name: agentgatewayv1alpha1.SingletonName}, catalog); err == nil {
 		failureMode = catalog.FailureMode()
 		requestTimeout = catalog.Spec.RequestTimeout
+		// Kept equal to the rate-limit service's descriptor row: a request
+		// whose registration carries no budget is limited by that row, and the
+		// two disagreeing would enforce one number and report another.
+		fallbackBudget = catalog.EffectiveDefaultTokenBudget()
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
 
-	// The fallback traces to the shared constant rather than a literal, so the
-	// value the policy falls back to and the value the accessor defaults to
-	// cannot drift apart.
 	spec := renderPolicySpec(failureMode, namespace, requestTimeout,
-		defaultBudgetWindow, agentgatewayv1alpha1.DefaultTokenBudget)
+		defaultBudgetWindow, fallbackBudget)
 
 	live := newPolicy()
 	err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: PolicyName}, live)

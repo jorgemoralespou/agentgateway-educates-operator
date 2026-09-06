@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	agentgatewayv1alpha1 "github.com/educates/agentgateway-educates-operator/api/agentgateway/v1alpha1"
 )
 
 // The registration is the only thing the gateway reads, so what it carries is
@@ -14,7 +16,7 @@ import (
 func TestRenderRegistrationCarriesTheHashBudgetAndExpiry(t *testing.T) {
 	expiry := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 
-	raw, err := renderRegistration("sha256:abc123", "ws-001", 250000, expiry)
+	raw, err := renderRegistration("sha256:abc123", "ws-001", agentgatewayv1alpha1.TokenBudgetValue(250000), expiry)
 	if err != nil {
 		t.Fatalf("renderRegistration() error: %v", err)
 	}
@@ -47,7 +49,7 @@ func TestRenderRegistrationNormalisesTheExpiryToUTC(t *testing.T) {
 	zone := time.FixedZone("UTC+5", 5*60*60)
 	expiry := time.Date(2026, 9, 3, 17, 0, 0, 0, zone)
 
-	raw, err := renderRegistration("sha256:abc", "ws-tz", 1000, expiry)
+	raw, err := renderRegistration("sha256:abc", "ws-tz", agentgatewayv1alpha1.TokenBudgetValue(1000), expiry)
 	if err != nil {
 		t.Fatalf("renderRegistration() error: %v", err)
 	}
@@ -73,7 +75,7 @@ func TestRenderRegistrationNormalisesTheExpiryToUTC(t *testing.T) {
 func TestRenderRegistrationCarriesNoKeyMaterial(t *testing.T) {
 	const key = "sk-thisIsTheActualParticipantKey"
 
-	raw, err := renderRegistration("sha256:deadbeef", "ws-002", 1000, time.Now())
+	raw, err := renderRegistration("sha256:deadbeef", "ws-002", agentgatewayv1alpha1.TokenBudgetValue(1000), time.Now())
 	if err != nil {
 		t.Fatalf("renderRegistration() error: %v", err)
 	}
@@ -89,7 +91,7 @@ func TestRenderRegistrationCarriesNoKeyMaterial(t *testing.T) {
 // A session name with an awkward character must not be able to produce invalid
 // JSON, which agentgateway would reject at load time for every key in the map.
 func TestRenderRegistrationEscapesTheSessionName(t *testing.T) {
-	raw, err := renderRegistration("sha256:abc", `ws"003\n`, 1000, time.Now())
+	raw, err := renderRegistration("sha256:abc", `ws"003\n`, agentgatewayv1alpha1.TokenBudgetValue(1000), time.Now())
 	if err != nil {
 		t.Fatalf("renderRegistration() error: %v", err)
 	}
@@ -103,7 +105,7 @@ func TestRenderRegistrationEscapesTheSessionName(t *testing.T) {
 // `key` is reserved by agentgateway for the redacted key itself, so no metadata
 // field may use that name (ADR-0004).
 func TestRenderRegistrationAvoidsTheReservedMetadataName(t *testing.T) {
-	raw, err := renderRegistration("sha256:abc", "ws-004", 1000, time.Now())
+	raw, err := renderRegistration("sha256:abc", "ws-004", agentgatewayv1alpha1.TokenBudgetValue(1000), time.Now())
 	if err != nil {
 		t.Fatalf("renderRegistration() error: %v", err)
 	}

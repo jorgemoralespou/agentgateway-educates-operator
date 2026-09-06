@@ -107,6 +107,17 @@ type AgentGatewaySessionStatus struct {
 	// any cleanup ran.
 	// +optional
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// EffectiveTokenBudget is the ceiling actually enforced, after the grant's
+	// own value, the catalog's default and the built-in constant have been
+	// resolved.
+	//
+	// Reported because a grant that inherits its budget carries no budget on
+	// its registration, so the registration no longer shows what an attendee
+	// is enforced at. This is the object an operator reaches for first when
+	// asking why an attendee got a 429.
+	// +optional
+	EffectiveTokenBudget int64 `json:"effectiveTokenBudget,omitempty"`
 }
 
 // AgentGatewaySession is one attendee's access to the Gateway for the duration

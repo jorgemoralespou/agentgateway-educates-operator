@@ -349,6 +349,10 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 		// to survive the round trip as absent, or no inherited value could ever
 		// take effect because the controller could not tell it was omitted.
 		It("accepts a grant that omits the budget, and reads it back as unset", func() {
+			// No cluster-wide default, so the built-in constant is what an
+			// omitted budget resolves to.
+			setCatalogBudgets(nil)
+
 			session := &agentgatewayv1alpha1.AgentGatewaySession{
 				ObjectMeta: metav1.ObjectMeta{Name: "ws-014", Namespace: workshopNamespace},
 				Spec: agentgatewayv1alpha1.AgentGatewaySessionSpec{
@@ -367,18 +371,19 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 			Expect(live.Spec.TokenBudget).To(BeNil(),
 				"an omitted budget must not be stamped with a default")
 
-			// And it still resolves, so nothing an attendee sees changes.
+			// And it still resolves, so the ceiling an attendee is enforced at
+			// is unchanged from before the field became nil-able.
 			Expect(live.TokenBudget()).To(Equal(agentgatewayv1alpha1.DefaultTokenBudget))
 
-			Eventually(func() string {
-				cm := &corev1.ConfigMap{}
+			Eventually(func() int64 {
+				got := &agentgatewayv1alpha1.AgentGatewaySession{}
 				if err := k8sClient.Get(ctx, types.NamespacedName{
-					Namespace: testGatewayNamespace, Name: "ws-014-agentgateway",
-				}, cm); err != nil {
-					return ""
+					Namespace: workshopNamespace, Name: "ws-014",
+				}, got); err != nil {
+					return 0
 				}
-				return parseRegistrationEntry(cm, "ws-014").Metadata[metadataKeyTokenBudget]
-			}, pollTimeout, pollInterval).Should(Equal("100000"))
+				return got.Status.EffectiveTokenBudget
+			}, pollTimeout, pollInterval).Should(Equal(agentgatewayv1alpha1.DefaultTokenBudget))
 		})
 
 		It("keeps the value a grant set explicitly", func() {
@@ -407,6 +412,131 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 			}
 			Expect(k8sClient.Create(ctx, session)).NotTo(Succeed(),
 				"zero must be rejected by validation, not registered as a ceiling")
+		})
+	})
+
+	Describe("inheriting the catalog's default budget", func() {
+		// The mechanism that makes a catalog edit reach a running session: an
+		// inheriting grant pins nothing, so the gateway falls through to the
+		// shared descriptor row. Writing the resolved number here instead would
+		// freeze it at the moment the grant was last reconciled.
+		It("writes no budget metadata for a grant that omits its budget", func() {
+			setCatalogBudgets(&agentgatewayv1alpha1.BudgetSpec{
+				DefaultTokenBudget: agentgatewayv1alpha1.TokenBudgetValue(40000),
+			})
+			session := createSessionWithout("ws-017")
+
+			Eventually(func() metav1.ConditionStatus {
+				return sessionCondition(session, agentgatewayv1alpha1.ConditionReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: testGatewayNamespace, Name: "ws-017-agentgateway",
+			}, cm)).To(Succeed())
+
+			entry := parseRegistrationEntry(cm, "ws-017")
+			Expect(entry.Metadata).NotTo(HaveKey(metadataKeyTokenBudget),
+				"an inheriting grant must pin no budget, or a catalog edit could not reach it")
+			// The rest of the registration is unaffected.
+			Expect(entry.Metadata).To(HaveKeyWithValue(metadataKeySession, "ws-017"))
+			Expect(entry.Metadata).To(HaveKey(metadataKeyExpiresAt))
+		})
+
+		It("reports the inherited budget on the grant's status", func() {
+			setCatalogBudgets(&agentgatewayv1alpha1.BudgetSpec{
+				DefaultTokenBudget: agentgatewayv1alpha1.TokenBudgetValue(40000),
+			})
+			createSessionWithout("ws-018")
+
+			// Status is where an operator looks first when asking why an
+			// attendee got a 429, and for an inheriting grant it is the only
+			// place the effective ceiling appears at all.
+			Eventually(func() int64 {
+				got := &agentgatewayv1alpha1.AgentGatewaySession{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: workshopNamespace, Name: "ws-018",
+				}, got); err != nil {
+					return 0
+				}
+				return got.Status.EffectiveTokenBudget
+			}, pollTimeout, pollInterval).Should(Equal(int64(40000)))
+		})
+
+		It("still pins the budget of a grant that asks for one, unaffected by the catalog", func() {
+			setCatalogBudgets(&agentgatewayv1alpha1.BudgetSpec{
+				DefaultTokenBudget: agentgatewayv1alpha1.TokenBudgetValue(40000),
+			})
+			session := createSession("ws-019")
+
+			Eventually(func() metav1.ConditionStatus {
+				return sessionCondition(session, agentgatewayv1alpha1.ConditionReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: testGatewayNamespace, Name: "ws-019-agentgateway",
+			}, cm)).To(Succeed())
+			Expect(parseRegistrationEntry(cm, "ws-019").Metadata).
+				To(HaveKeyWithValue(metadataKeyTokenBudget, "100000"),
+					"a grant that asked for a budget must not be moved by the catalog's default")
+
+			got := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-019",
+			}, got)).To(Succeed())
+			Expect(got.Status.EffectiveTokenBudget).To(Equal(int64(100000)))
+		})
+
+		It("falls back to the built-in constant when the catalog declares no default", func() {
+			setCatalogBudgets(nil)
+			createSessionWithout("ws-020")
+
+			Eventually(func() int64 {
+				got := &agentgatewayv1alpha1.AgentGatewaySession{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: workshopNamespace, Name: "ws-020",
+				}, got); err != nil {
+					return 0
+				}
+				return got.Status.EffectiveTokenBudget
+			}, pollTimeout, pollInterval).Should(Equal(agentgatewayv1alpha1.DefaultTokenBudget))
+		})
+
+		// The property the whole design rests on: changing the cluster default
+		// must not require reconciling grants or rewriting registrations.
+		It("changes what an inheriting grant is enforced at without rewriting its registration", func() {
+			setCatalogBudgets(&agentgatewayv1alpha1.BudgetSpec{
+				DefaultTokenBudget: agentgatewayv1alpha1.TokenBudgetValue(40000),
+			})
+			session := createSessionWithout("ws-021")
+
+			Eventually(func() metav1.ConditionStatus {
+				return sessionCondition(session, agentgatewayv1alpha1.ConditionReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: testGatewayNamespace, Name: "ws-021-agentgateway",
+			}, cm)).To(Succeed())
+			registrationVersion := cm.ResourceVersion
+
+			setCatalogBudgets(&agentgatewayv1alpha1.BudgetSpec{
+				DefaultTokenBudget: agentgatewayv1alpha1.TokenBudgetValue(70000),
+			})
+
+			// The registration is untouched: it carries no budget either way,
+			// so there is nothing in it for the new default to change.
+			Consistently(func() string {
+				got := &corev1.ConfigMap{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: testGatewayNamespace, Name: "ws-021-agentgateway",
+				}, got); err != nil {
+					return ""
+				}
+				return got.ResourceVersion
+			}, "2s", pollInterval).Should(Equal(registrationVersion),
+				"a catalog edit must not rewrite an inheriting grant's registration")
 		})
 	})
 
