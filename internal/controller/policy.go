@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -11,27 +12,34 @@ import (
 	agentgatewayv1alpha1 "github.com/educates/agentgateway-educates-operator/api/agentgateway/v1alpha1"
 )
 
-// tokenBudgetOverrideExpression reads each attendee's own token ceiling off
-// their key registration.
+// tokenBudgetOverride reads each attendee's own token ceiling off their key
+// registration.
 //
 // agentgateway's limitOverride must evaluate to an object with `unit` and
 // `requestsPerUnit`. Combined with the descriptor's `unit: Tokens`, the count
 // being limited is tokens rather than requests.
 //
-// `hour` is the window. The budget is documented as a ceiling for the session's
-// lifetime, and a workshop is shorter than that, so an hourly window is the
-// closest thing the rate-limit service offers to a lifetime cap. It does mean
-// an attendee in a session longer than an hour gets a fresh allowance, an
-// acceptable trade for a disposable workshop cluster, and the TTL bounds the
-// key's life regardless.
+// The window and the fallback are arguments rather than baked into the text:
+// the window is a per-grant choice and the fallback tracks whatever the catalog
+// or the built-in constant says the ordinary budget is. Hardcoding either put
+// two copies of one value in the tree, free to drift apart silently.
 //
 // Registration metadata is map[string]string, so the value is parsed back to an
 // integer here. A registration written by an older operator may not carry the
-// field at all, so a missing or unparseable value falls back to the default
-// rather than failing the request.
-const tokenBudgetOverrideExpression = `has(apiKey.tokenBudget) ? ` +
-	`{"unit": "hour", "requestsPerUnit": int(apiKey.tokenBudget)} : ` +
-	`{"unit": "hour", "requestsPerUnit": 100000}`
+// field at all, and a grant that inherits its budget deliberately omits it, so
+// a missing or unparseable value falls back rather than failing the request.
+func tokenBudgetOverride(window string, fallbackBudget int64) string {
+	return `has(apiKey.tokenBudget) ? ` +
+		`{"unit": "` + window + `", "requestsPerUnit": int(apiKey.tokenBudget)} : ` +
+		`{"unit": "` + window + `", "requestsPerUnit": ` + strconv.FormatInt(fallbackBudget, 10) + `}`
+}
+
+// defaultBudgetWindow is the window the policy is rendered with today.
+//
+// Named rather than inline so ticket 06's per-grant window has one place to
+// replace. It is hourly, which is not the session-lifetime cap the grant's
+// documentation claims; that discrepancy is corrected in 06.
+const defaultBudgetWindow = "hour"
 
 // ensurePolicy renders the single API-key policy.
 //
@@ -58,7 +66,11 @@ func (r *AgentGatewayPlatformReconciler) ensurePolicy(ctx context.Context, names
 		return err
 	}
 
-	spec := renderPolicySpec(failureMode, namespace, requestTimeout)
+	// The fallback traces to the shared constant rather than a literal, so the
+	// value the policy falls back to and the value the accessor defaults to
+	// cannot drift apart.
+	spec := renderPolicySpec(failureMode, namespace, requestTimeout,
+		defaultBudgetWindow, agentgatewayv1alpha1.DefaultTokenBudget)
 
 	live := newPolicy()
 	err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: PolicyName}, live)
@@ -90,7 +102,11 @@ func (r *AgentGatewayPlatformReconciler) ensurePolicy(ctx context.Context, names
 //
 // Split out as a pure function so the descriptor shape: the part that is easy
 // to get subtly wrong and expensive to debug on a cluster, is unit-testable.
-func renderPolicySpec(failureMode agentgatewayv1alpha1.RateLimitFailureMode, namespace, requestTimeout string) map[string]any {
+//
+// budgetWindow and fallbackBudget parameterize the limit override. They are
+// passed rather than read here because this function must stay pure, and
+// because the values come from a catalog the caller has already fetched.
+func renderPolicySpec(failureMode agentgatewayv1alpha1.RateLimitFailureMode, namespace, requestTimeout string, budgetWindow string, fallbackBudget int64) map[string]any {
 	spec := map[string]any{
 		// targetRefs has no namespace field: the target must be in the policy's
 		// own namespace. That restriction is the whole reason registrations
@@ -160,7 +176,7 @@ func renderPolicySpec(failureMode agentgatewayv1alpha1.RateLimitFailureMode, nam
 							// cannot hold a row per session, but each key
 							// carries its own limit and CEL reads it here
 							// (ADR-0003).
-							"limitOverride": tokenBudgetOverrideExpression,
+							"limitOverride": tokenBudgetOverride(budgetWindow, fallbackBudget),
 						},
 					},
 				},
