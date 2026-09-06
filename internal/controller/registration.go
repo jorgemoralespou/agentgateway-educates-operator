@@ -56,13 +56,17 @@ const metadataKeyTokenBudget = "tokenBudget"
 // unchanged if agentgateway ever binds a time function.
 const metadataKeyExpiresAt = "expiresAt"
 
-// renderRegistration builds the JSON for one session's key registration.
+// buildRegistration assembles the entry for one session's key registration.
 //
 // Holds the hash, the session name, the token budget and the expiry. No key
 // material and no provider credential: everything an orphaned registration
 // could leak is either public or already known to whoever holds the key.
-func renderRegistration(keyHash, sessionName string, tokenBudget int64, expiresAt time.Time) (string, error) {
-	entry := registrationEntry{
+//
+// Split from the marshalling so a reconcile can compare the entry it wants
+// against the entry already published, rather than comparing serialized JSON
+// whose key order is an implementation detail of the marshaller.
+func buildRegistration(keyHash, sessionName string, tokenBudget int64, expiresAt time.Time) registrationEntry {
+	return registrationEntry{
 		KeyHash: keyHash,
 		Metadata: map[string]string{
 			metadataKeySession: sessionName,
@@ -74,6 +78,27 @@ func renderRegistration(keyHash, sessionName string, tokenBudget int64, expiresA
 			metadataKeyExpiresAt: expiresAt.UTC().Format(time.RFC3339),
 		},
 	}
+}
+
+// equals reports whether two entries would enforce the same thing.
+//
+// Compares the whole payload rather than the hash alone. A reconcile that
+// changed only the budget or the expiry still has to be written, or the
+// gateway keeps enforcing a ceiling the grant no longer asks for.
+func (e registrationEntry) equals(other registrationEntry) bool {
+	if e.KeyHash != other.KeyHash || len(e.Metadata) != len(other.Metadata) {
+		return false
+	}
+	for k, v := range e.Metadata {
+		if w, ok := other.Metadata[k]; !ok || v != w {
+			return false
+		}
+	}
+	return true
+}
+
+// marshalRegistration serializes an entry for the ConfigMap.
+func marshalRegistration(entry registrationEntry) (string, error) {
 	// Marshalled rather than fmt-ed so a session name with an awkward character
 	// cannot produce invalid JSON that agentgateway would reject at load time.
 	buf, err := json.Marshal(entry)
@@ -81,6 +106,11 @@ func renderRegistration(keyHash, sessionName string, tokenBudget int64, expiresA
 		return "", fmt.Errorf("render key registration: %w", err)
 	}
 	return string(buf), nil
+}
+
+// renderRegistration builds the JSON for one session's key registration.
+func renderRegistration(keyHash, sessionName string, tokenBudget int64, expiresAt time.Time) (string, error) {
+	return marshalRegistration(buildRegistration(keyHash, sessionName, tokenBudget, expiresAt))
 }
 
 // parseRegistration reads back a registration entry, so a reconcile can tell

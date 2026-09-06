@@ -235,12 +235,64 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 			Expect(readKey("ws-004")).To(Equal(firstKey),
 				"a reconcile must never rotate a live attendee's key")
 
-			// And the registration was not rewritten, since the hash did not
-			// change.
+			// The registration follows the edited budget. Rewriting it is
+			// required here, and must still not rotate the key: the hash the
+			// attendee holds is unchanged even though the entry was rewritten.
+			Eventually(func() string {
+				live := &corev1.ConfigMap{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: testGatewayNamespace, Name: "ws-004-agentgateway",
+				}, live); err != nil {
+					return ""
+				}
+				return parseRegistrationEntry(live, "ws-004").Metadata[metadataKeyTokenBudget]
+			}, pollTimeout, pollInterval).Should(Equal("200000"))
+
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Namespace: testGatewayNamespace, Name: "ws-004-agentgateway",
 			}, cm)).To(Succeed())
-			Expect(cm.ResourceVersion).To(Equal(firstResourceVersion),
+			Expect(parseRegistrationEntry(cm, "ws-004").KeyHash).
+				To(Equal(participantkey.Hash(firstKey)),
+					"rewriting a registration must not rotate the key it carries")
+			Expect(cm.ResourceVersion).NotTo(Equal(firstResourceVersion),
+				"an edited budget must reach the registration")
+		})
+
+		// The other half of the split: the write must still be skipped when
+		// nothing about the rendered registration has changed, or every
+		// resync would churn a ConfigMap the gateway is watching.
+		It("does not rewrite the registration when nothing changed", func() {
+			session := createSession("ws-013")
+
+			Eventually(func() metav1.ConditionStatus {
+				return sessionCondition(session, agentgatewayv1alpha1.ConditionReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: testGatewayNamespace, Name: "ws-013-agentgateway",
+			}, cm)).To(Succeed())
+			firstResourceVersion := cm.ResourceVersion
+
+			// Force a reconcile that changes nothing the registration carries.
+			// An annotation bumps the generation without touching the budget,
+			// the TTL or the key.
+			live := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-013",
+			}, live)).To(Succeed())
+			live.Annotations = map[string]string{"example.com/nudge": "1"}
+			Expect(k8sClient.Update(ctx, live)).To(Succeed())
+
+			Consistently(func() string {
+				got := &corev1.ConfigMap{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: testGatewayNamespace, Name: "ws-013-agentgateway",
+				}, got); err != nil {
+					return ""
+				}
+				return got.ResourceVersion
+			}, "2s", pollInterval).Should(Equal(firstResourceVersion),
 				"an unchanged registration must not be rewritten")
 		})
 	})

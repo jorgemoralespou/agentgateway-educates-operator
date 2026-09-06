@@ -386,7 +386,8 @@ func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, 
 	name := session.ResourceName()
 	hash := participantkey.Hash(key)
 
-	payload, err := renderRegistration(hash, session.Name, session.TokenBudget(), expiresAt)
+	desiredEntry := buildRegistration(hash, session.Name, session.TokenBudget(), expiresAt)
+	payload, err := marshalRegistration(desiredEntry)
 	if err != nil {
 		return err
 	}
@@ -428,10 +429,20 @@ func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, 
 		return getErr
 	}
 
-	// Only rewritten when the hash has actually changed, so an unchanged
-	// reconcile does no writes at all.
+	// Compared on the whole rendered entry, not just the hash: the budget and
+	// the expiry ride in the metadata, and comparing the hash alone would
+	// render a corrected payload and then discard it, leaving the gateway
+	// enforcing a ceiling the grant no longer asks for.
+	//
+	// Still a comparison rather than an unconditional write, so a reconcile
+	// that changes nothing does no write at all and the gateway is not made to
+	// reload a ConfigMap it is watching.
+	//
+	// Note this never rotates a key on its own: the hash is derived from the
+	// key the reconcile already holds, so a metadata-only change rewrites the
+	// entry around an unchanged hash.
 	if existing, ok := live.Data[session.Name]; ok {
-		if entry, err := parseRegistration(existing); err == nil && entry.KeyHash == hash {
+		if entry, err := parseRegistration(existing); err == nil && entry.equals(desiredEntry) {
 			return nil
 		}
 	}
