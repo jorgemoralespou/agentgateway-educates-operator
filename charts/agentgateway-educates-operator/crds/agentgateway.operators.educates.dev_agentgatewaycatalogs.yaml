@@ -73,7 +73,7 @@ spec:
                       A decimal string for the same reason the grant's is: no floating-point
                       field belongs in a custom resource. Unset means grants inherit no cost
                       ceiling, and the token budget alone applies to them.
-                    pattern: ^[0-9]+\.?[0-9]*$
+                    pattern: ^(0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(\.[0-9]+)?)$
                     type: string
                   defaultTokenBudget:
                     description: |-
@@ -97,7 +97,7 @@ spec:
                       The cost half of the same trust boundary MaxTokenBudget draws, and it
                       clamps rather than rejects for the same reason. Left unset, nothing is
                       clamped.
-                    pattern: ^[0-9]+\.?[0-9]*$
+                    pattern: ^(0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(\.[0-9]+)?)$
                     type: string
                   maxTokenBudget:
                     description: |-

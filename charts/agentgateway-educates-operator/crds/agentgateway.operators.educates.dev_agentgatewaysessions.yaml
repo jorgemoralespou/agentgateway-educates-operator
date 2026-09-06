@@ -127,7 +127,7 @@ spec:
                   skipped silently.
 
                   Unset means no cost ceiling, and the token budget alone applies.
-                pattern: ^[0-9]+\.?[0-9]*$
+                pattern: ^(0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(\.[0-9]+)?)$
                 type: string
               tokenBudget:
                 description: |-

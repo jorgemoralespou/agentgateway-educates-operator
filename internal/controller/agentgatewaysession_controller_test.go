@@ -633,6 +633,53 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 			Expect(got.Status.EffectiveTokenBudget).To(Equal(int64(100000)))
 		})
 
+		// A ceiling that only binds grants created after it was set is not a
+		// trust boundary. A grant that pinned its own budget bypasses the
+		// shared descriptor row entirely, so nothing about it changes when the
+		// catalog is edited unless the grant is reconciled.
+		It("re-clamps a running session when the maximum is lowered", func() {
+			setCatalogBudgets(nil)
+			createSession("ws-036") // asks for 100000
+
+			Eventually(func() int64 {
+				got := &agentgatewayv1alpha1.AgentGatewaySession{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: workshopNamespace, Name: "ws-036",
+				}, got); err != nil {
+					return 0
+				}
+				return got.Status.EffectiveTokenBudget
+			}, pollTimeout, pollInterval).Should(Equal(int64(100000)))
+
+			// The operator decides 100000 is more than they will pay for.
+			setCatalogBudgets(&agentgatewayv1alpha1.BudgetSpec{
+				MaxTokenBudget: agentgatewayv1alpha1.TokenBudgetValue(15000),
+			})
+
+			Eventually(func() int64 {
+				got := &agentgatewayv1alpha1.AgentGatewaySession{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: workshopNamespace, Name: "ws-036",
+				}, got); err != nil {
+					return 0
+				}
+				return got.Status.EffectiveTokenBudget
+			}, pollTimeout, pollInterval).Should(Equal(int64(15000)),
+				"a lowered maximum must reach sessions that already pinned a budget")
+
+			// And the gateway is actually enforcing the lowered value, not just
+			// status reporting it.
+			Eventually(func() string {
+				cm := &corev1.ConfigMap{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: testGatewayNamespace, Name: "ws-036-agentgateway",
+				}, cm); err != nil {
+					return ""
+				}
+				return parseRegistrationEntry(cm, "ws-036").Metadata[metadataKeyTokenBudget]
+			}, pollTimeout, pollInterval).Should(Equal("15000"))
+		})
+
 		// An operator cannot configure a default that exceeds their own
 		// ceiling, so the row inheriting grants land on stays within it.
 		It("bounds the catalog's own default by the maximum", func() {

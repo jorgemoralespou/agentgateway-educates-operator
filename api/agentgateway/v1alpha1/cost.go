@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -26,8 +27,13 @@ const costDecimalPlaces = 6
 //
 // Parsed from a string by hand rather than through a float: a floating-point
 // field in a custom resource would admit representation errors into a value
-// that is compared for equality and rendered into a CEL expression, so no
-// float appears anywhere in this path.
+// that is compared for equality and rendered into a CEL expression.
+//
+// The invariant is about the *authored ceiling*, not about the whole path. The
+// charge side is necessarily float arithmetic, since agentgateway exposes the
+// realized cost as a double and the policy's CEL scales it to micro-dollars
+// before truncating. What is guaranteed here is that the ceiling an operator
+// wrote is the ceiling stored and compared, exactly.
 //
 // Digits beyond micro-dollar grain are truncated rather than rounded. At this
 // grain the difference is a millionth of a dollar, and truncating never
@@ -96,13 +102,22 @@ type ResolvedCostBudget struct {
 // is the right default: this project maintains no pricing data and cannot
 // invent a sensible figure for someone else's provider account.
 //
-// Unparseable values are treated as absent rather than as an error. Validation
-// on the CRD is what rejects a malformed string; by the time a value reaches
-// here, failing a running attendee's request over a field the API server
-// accepted would be worse than falling back.
+// An unparseable *budget* is treated as absent: CRD validation is what rejects
+// a malformed string, and by the time one reaches here, failing a running
+// attendee's request over a field the API server accepted would be worse than
+// falling back.
+//
+// An unparseable *maximum* is emphatically not treated as absent. That would
+// silently remove the trust boundary the field exists to draw, leaving an
+// operator believing they had a ceiling while grants spent without one, and
+// nothing would report the discrepancy. A maximum that cannot be read is
+// therefore treated as the most restrictive thing it could have meant: the
+// resolved budget is clamped to nothing and reported as clamped, which fails
+// visibly rather than silently.
 func ResolveCostBudget(grant, catalogDefault, catalogMax string) ResolvedCostBudget {
 	resolved := ResolvedCostBudget{}
 
+	_, grantErr := ParseDollarsToMicroDollars(grant)
 	if v, err := ParseDollarsToMicroDollars(grant); err == nil {
 		resolved.Configured = true
 		resolved.MicroDollars = v
@@ -115,15 +130,29 @@ func ResolveCostBudget(grant, catalogDefault, catalogMax string) ResolvedCostBud
 		return resolved
 	}
 
+	// An absent maximum clamps nothing, which is what keeps the ceiling
+	// opt-in. Only a maximum that was set but cannot be read is an error.
+	if strings.TrimSpace(catalogMax) == "" {
+		return resolved
+	}
+
+	max, err := ParseDollarsToMicroDollars(catalogMax)
+	if err != nil {
+		// Unreadable: enforce the smallest ceiling rather than none, and say so.
+		resolved.Requested = resolved.MicroDollars
+		resolved.MicroDollars = 1
+		resolved.Clamped = true
+		return resolved
+	}
+
 	// The maximum bounds the catalog's own default too, so an operator cannot
 	// configure a default that exceeds their own ceiling.
-	if max, err := ParseDollarsToMicroDollars(catalogMax); err == nil && resolved.MicroDollars > max {
+	if resolved.MicroDollars > max {
 		resolved.Requested = resolved.MicroDollars
 		resolved.MicroDollars = max
 		// Only a grant that asked for too much is reported as clamped, matching
 		// how token budgets report it: a clamped default is the operator's own
 		// two settings disagreeing, not something the author did.
-		_, grantErr := ParseDollarsToMicroDollars(grant)
 		resolved.Clamped = grantErr == nil
 	}
 
@@ -163,13 +192,15 @@ func parseDigits(s string) (int64, error) {
 		if r < '0' || r > '9' {
 			return 0, fmt.Errorf("not a digit: %q", r)
 		}
-		next := n*10 + int64(r-'0')
-		// Overflow would silently enforce a budget unrelated to the one
-		// written, so it is an error rather than a wrap.
-		if next < n {
+		d := int64(r - '0')
+		// Checked before the arithmetic, not after. Comparing the product
+		// against the running total catches only the cases that happen to wrap
+		// below it, so a large value could pass the check and silently enforce
+		// a budget unrelated to the one written.
+		if n > (math.MaxInt64-d)/10 {
 			return 0, fmt.Errorf("value out of range")
 		}
-		n = next
+		n = n*10 + d
 	}
 	return n, nil
 }

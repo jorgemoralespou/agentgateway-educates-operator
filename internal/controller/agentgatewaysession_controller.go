@@ -663,8 +663,49 @@ func (r *AgentGatewaySessionReconciler) SetupWithManager(mgr ctrl.Manager) error
 		// would never be repaired.
 		Watches(&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(mapSecretToSession)).
+		// A lowered maximum has to reach grants that already pinned a budget
+		// above it. Those grants bypass the shared descriptor row entirely,
+		// carrying their own ceiling on their own registration, so unlike an
+		// edited *default* nothing about them changes until they are
+		// reconciled. Without this watch the trust boundary would hold only for
+		// grants created after the edit, which is not a trust boundary.
+		//
+		// Deliberately no GenerationChangedPredicate: the budget block lives in
+		// spec, so a generation change is exactly what this needs to see, and
+		// the mapping already narrows it to the one catalog that matters.
+		Watches(&agentgatewayv1alpha1.AgentGatewayCatalog{},
+			handler.EnqueueRequestsFromMapFunc(r.mapCatalogToSessions)).
 		Named("agentgatewaysession").
 		Complete(r)
+}
+
+// mapCatalogToSessions wakes every grant drawing on an edited catalog.
+//
+// A full list rather than an index: grants are per attendee and bounded by the
+// size of a workshop, and this fires only when a cluster operator edits the
+// catalog, which is rare. An informer index would be machinery bought for a
+// cost that is not being paid.
+func (r *AgentGatewaySessionReconciler) mapCatalogToSessions(ctx context.Context, obj client.Object) []reconcile.Request {
+	sessions := &agentgatewayv1alpha1.AgentGatewaySessionList{}
+	if err := r.List(ctx, sessions); err != nil {
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(sessions.Items))
+	for i := range sessions.Items {
+		session := &sessions.Items[i]
+		// Only the grants that actually draw on this catalog.
+		if session.CatalogName() != obj.GetName() {
+			continue
+		}
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: session.Namespace,
+				Name:      session.Name,
+			},
+		})
+	}
+	return requests
 }
 
 // mapSecretToSession routes a participant key Secret back to its grant.

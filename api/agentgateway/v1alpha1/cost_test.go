@@ -124,6 +124,25 @@ func TestParseDollarsToMicroDollars(t *testing.T) {
 			in:      "1_000",
 			wantErr: true,
 		},
+		{
+			// The overflow guard has to be checked before the multiply. A guard
+			// comparing the product against the running total catches only the
+			// cases that happen to wrap below it, so this value parsed cleanly
+			// to an unrelated, smaller number.
+			name:    "a value that overflows int64 micro-dollars is rejected",
+			in:      "43896277737238.125098",
+			wantErr: true,
+		},
+		{
+			name:    "a value far beyond int64 is rejected",
+			in:      "99999999999999999999.99",
+			wantErr: true,
+		},
+		{
+			name:    "the largest value that still fits is accepted",
+			in:      "9223372036854.775807",
+			want:    9223372036854775807,
+		},
 	}
 
 	for _, tt := range tests {
@@ -227,6 +246,37 @@ func TestResolveCostBudget(t *testing.T) {
 			grant:          "abc",
 			catalogDefault: "def",
 			wantConfigured: false,
+		},
+		{
+			// The regression that matters most: treating an unreadable maximum
+			// as absent silently removed the trust boundary, leaving an
+			// operator believing they had a ceiling while grants spent without
+			// one. It now fails visibly instead.
+			name:           "an unreadable maximum clamps hard rather than disappearing",
+			grant:          "1000",
+			catalogMax:     "5.",
+			wantConfigured: true,
+			wantMicros:     1,
+			wantClamped:    true,
+			wantRequested:  1_000_000_000,
+		},
+		{
+			name:           "a maximum of zero clamps hard rather than disappearing",
+			grant:          "1000",
+			catalogMax:     "0",
+			wantConfigured: true,
+			wantMicros:     1,
+			wantClamped:    true,
+			wantRequested:  1_000_000_000,
+		},
+		{
+			// An absent maximum is different from an unreadable one, and must
+			// still clamp nothing, or the ceiling would stop being opt-in.
+			name:           "whitespace is treated as an absent maximum, not an unreadable one",
+			grant:          "1000",
+			catalogMax:     "   ",
+			wantConfigured: true,
+			wantMicros:     1_000_000_000,
 		},
 	}
 

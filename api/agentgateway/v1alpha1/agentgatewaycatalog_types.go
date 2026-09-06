@@ -163,7 +163,7 @@ type BudgetSpec struct {
 	// A decimal string for the same reason the grant's is: no floating-point
 	// field belongs in a custom resource. Unset means grants inherit no cost
 	// ceiling, and the token budget alone applies to them.
-	// +kubebuilder:validation:Pattern=`^[0-9]+\.?[0-9]*$`
+	// +kubebuilder:validation:Pattern=`^(0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(\.[0-9]+)?)$`
 	// +optional
 	DefaultCostBudget string `json:"defaultCostBudget,omitempty"`
 
@@ -173,7 +173,7 @@ type BudgetSpec struct {
 	// The cost half of the same trust boundary MaxTokenBudget draws, and it
 	// clamps rather than rejects for the same reason. Left unset, nothing is
 	// clamped.
-	// +kubebuilder:validation:Pattern=`^[0-9]+\.?[0-9]*$`
+	// +kubebuilder:validation:Pattern=`^(0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(\.[0-9]+)?)$`
 	// +optional
 	MaxCostBudget string `json:"maxCostBudget,omitempty"`
 }

@@ -67,7 +67,7 @@ type AgentGatewaySessionSpec struct {
 	// skipped silently.
 	//
 	// Unset means no cost ceiling, and the token budget alone applies.
-	// +kubebuilder:validation:Pattern=`^[0-9]+\.?[0-9]*$`
+	// +kubebuilder:validation:Pattern=`^(0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(\.[0-9]+)?)$`
 	// +optional
 	CostBudget string `json:"costBudget,omitempty"`
 

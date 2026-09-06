@@ -49,10 +49,20 @@ func tokenBudgetOverride(window string, fallbackBudget int64) string {
 // same span. A registration with no cost budget is not reached: the descriptor
 // entry keys on the cost budget's presence, so a key without one contributes no
 // entry and the descriptor does not apply to it.
+// Guarded with has() like the token override, even though the descriptor's
+// entry already keys on the field's presence. An override that failed to
+// evaluate would fall back to the shared descriptor row, which is written in
+// tokens rather than micro-dollars and would enforce a ceiling unrelated to any
+// budget. The guard costs nothing and removes that coupling.
 func costBudgetOverride(window string) string {
 	unit := `(has(apiKey.` + metadataKeyBudgetWindow + `) ? ` +
 		`apiKey.` + metadataKeyBudgetWindow + ` : "` + window + `")`
-	return `{"unit": ` + unit + `, "requestsPerUnit": int(apiKey.` + metadataKeyCostBudget + `)}`
+	return `has(apiKey.` + metadataKeyCostBudget + `) ? ` +
+		`{"unit": ` + unit + `, "requestsPerUnit": int(apiKey.` + metadataKeyCostBudget + `)} : ` +
+		// Unreachable while the entry keys on presence. If it ever is reached,
+		// the smallest possible ceiling is the safe direction: an unmetered
+		// attendee is the failure this feature exists to prevent.
+		`{"unit": ` + unit + `, "requestsPerUnit": 1}`
 }
 
 // unpricedRequestMicroDollars is charged against a cost budget when a request
