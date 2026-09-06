@@ -1,6 +1,14 @@
-Your key carries a token budget, `tokenBudget: 20000` in the grant on the last
-page. It is deliberately small here so you can hit it inside a workshop
-session. A real workshop would set it to whatever its exercises need.
+Your key carries a token budget. The grant on the last page did not name a
+number, so it inherited one; ask it what it actually got:
+
+```execute
+kubectl get agentgatewaysession "$SESSION_NAME" -n "$WORKSHOP_NAMESPACE" \
+  -o jsonpath='{.status.effectiveTokenBudget}{"\n"}'
+```
+
+Deliberately small, so you can hit it inside a workshop session. A real
+workshop would use whatever its exercises need. Page 3 covers where that number
+came from and who chose it.
 
 The point of a per-attendee budget is not to stop you working. It is that a
 runaway loop, an accidental infinite retry, or one person pasting a novel into
@@ -67,18 +75,21 @@ kubectl get agentgatewaysession "$SESSION_NAME" -n "$WORKSHOP_NAMESPACE" \
 
 The budget itself is not counted down in status: the gateway tracks
 consumption against your key hash, and the grant only records what you were
-allotted:
+allotted.
+
+Compare what your grant *asked for* against what it is *enforced at*:
 
 ```execute
 kubectl get agentgatewaysession "$SESSION_NAME" -n "$WORKSHOP_NAMESPACE" \
-  -o jsonpath='{.status.effectiveTokenBudget}{"\n"}'
+  -o jsonpath='spec.tokenBudget:             [{.spec.tokenBudget}]{"\n"}status.effectiveTokenBudget:  [{.status.effectiveTokenBudget}]{"\n"}'
 ```
 
-Read from `status`, not `spec`, on purpose. A grant may leave `tokenBudget`
-out entirely and inherit whatever the cluster operator set on the catalog, and
-a grant asking for more than the operator allows is clamped down to their
-maximum. `status.effectiveTokenBudget` is what you are actually enforced at
-after all of that; `spec.tokenBudget` is only what this particular grant asked
-for, and may be empty.
+`spec` is empty and `status` is not. That is the inheritance working: this
+grant named no budget, so there is nothing in its spec to read, and
+`status.effectiveTokenBudget` is the only place the real number appears.
 
-Next: what happens to this key when you finish.
+Always read the budget from `status`, never from `spec`. A grant may inherit,
+as this one does, or ask for more than the operator allows and be clamped down.
+`status.effectiveTokenBudget` is what you are enforced at after all of that.
+
+Next: who chose that number, and the ceiling they cannot let you past.

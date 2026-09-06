@@ -1,6 +1,6 @@
 # Sample workshop
 
-A four-page Educates workshop demonstrating what this operator does: every
+A five-page Educates workshop demonstrating what this operator does: every
 attendee gets their own budgeted LLM API key, minted when their session starts
 and revoked when it ends.
 
@@ -13,7 +13,7 @@ exactly what to write.
 ```
 resources/workshop.yaml         the Workshop definition
 resources/trainingportal.yaml   a portal with capacity for two sessions
-workshop/content/*.md           the four pages, ordered by filename prefix
+workshop/content/*.md           the five pages, ordered by filename prefix
 catalog/agentgatewaycatalog.yaml  the model catalog the workshop reads from
 ```
 
@@ -30,8 +30,15 @@ only `workshop.yaml` and `trainingportal.yaml`.
    side.
 3. **Your budget is yours alone**, exhaust a deliberately small budget, watch
    the 429s, confirm a neighbour is unaffected.
-4. **When your session ends**: the owner reference, the finalizer and the TTL
+4. **Who sets the ceiling**: the budget was inherited from the catalog rather
+   than chosen by the workshop. Covers the cluster-wide default, the maximum a
+   workshop cannot exceed and how clamping reports itself, the budget window,
+   and cost budgets in dollars.
+5. **When your session ends**: the owner reference, the finalizer and the TTL
    that revoke the key.
+
+Page 4 is the one to read if you are deciding how to configure a cluster rather
+than how to write a workshop: it is the operator's half of the arrangement.
 
 ## Prerequisites
 

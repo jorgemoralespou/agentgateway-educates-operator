@@ -73,7 +73,7 @@ spec:
             key: api-key
 
     objects:
-      # Attendees inspect their own grant and Secret on pages 2 and 4. The
+      # Attendees inspect their own grant and Secret on pages 2, 3, 4 and 5. The
       # default session role covers only the core, apps, batch and networking
       # groups, so reading a custom resource needs an explicit grant, without
       # this, every kubectl command in the content fails with a forbidden error.
@@ -123,6 +123,39 @@ spec:
             name: $(service_account)
             namespace: $(workshop_namespace)
 
+      # Page 4 reads the catalog to show attendees the ceiling their budget was
+      # resolved against. The catalog is cluster-scoped, so this needs a
+      # ClusterRole rather than the namespaced Role above.
+      #
+      # Read-only, and the catalog holds no credential material by design: it
+      # references provider Secrets by name and never contains a key, which is
+      # what makes it safe to show an attendee at all.
+      #
+      # Drop this pair, and page 4's catalog commands, if you would rather not
+      # let attendees see the cluster's model configuration.
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: $(session_name)-agentgateway-catalog-reader
+        rules:
+          - apiGroups: ["agentgateway.operators.educates.dev"]
+            resources: ["agentgatewaycatalogs"]
+            resourceNames: ["cluster"]
+            verbs: ["get"]
+
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: $(session_name)-agentgateway-catalog-reader
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: $(session_name)-agentgateway-catalog-reader
+        subjects:
+          - kind: ServiceAccount
+            name: $(service_account)
+            namespace: $(workshop_namespace)
+
       - apiVersion: agentgateway.operators.educates.dev/v1alpha1
         kind: AgentGatewaySession
         metadata:
@@ -137,6 +170,26 @@ spec:
         spec:
           catalogRef:
             name: cluster
-          # Deliberately small so page 3 can exhaust it inside a session.
-          tokenBudget: 20000
+
+          # No `tokenBudget` here, deliberately.
+          #
+          # Omitting it makes this grant inherit whatever the cluster operator
+          # set as `budgets.defaultTokenBudget` on the catalog, which is the
+          # point: the workshop follows the cluster rather than freezing a
+          # number into a workshop definition that was written months ago and
+          # is redeployed rarely.
+          #
+          # The sample catalog sets 20000, small enough that page 3 can exhaust
+          # it inside a session. Set a number here instead to override it, and
+          # the operator's `maxTokenBudget` still bounds whatever you ask for.
+
+          # How long one budget lasts before it refills. A day outlasts any
+          # workshop, so in practice an attendee gets one budget for the whole
+          # session; it is stated explicitly here because it is the default and
+          # worth an author knowing it exists.
+          #
+          # Not the same thing as `ttl` below: this is how long the budget
+          # lasts, that is how long the key works at all.
+          budgetWindow: day
+
           ttl: 2h

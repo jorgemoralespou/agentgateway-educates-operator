@@ -17,9 +17,13 @@ session:
       spec:
         catalogRef:
           name: cluster
-        tokenBudget: 20000
+        budgetWindow: day
         ttl: 2h
 ```
+
+Notice what is *not* there: no `tokenBudget`. This workshop does not choose its
+own budget. It inherits whatever the cluster operator decided, which is the
+subject of page 4.
 
 Plus two environment variables reading the Secret it produces:
 
@@ -82,7 +86,7 @@ gateway's own namespace there is a second object, and it holds **only a hash**:
 
 ```
 data:
-  registration: {"keyHash":"sha256:...","metadata":{"session":"..."}}
+  registration: {"keyHash":"sha256:...","metadata":{"session":"...","budgetWindow":"day","expiresAt":"..."}}
 ```
 
 The gateway authenticates you by hashing what you send and comparing. Nothing

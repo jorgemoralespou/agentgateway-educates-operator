@@ -64,6 +64,47 @@ spec:
   rateLimit:
     failureMode: FailClosed
 
+  # The budget policy every grant inherits from.
+  #
+  # This is the cluster operator's half of the arrangement, and it lives here
+  # rather than in a workshop definition because the person who owns the
+  # provider credential and pays the invoice is the person who edits this
+  # object. A workshop author cannot raise these.
+  budgets:
+    # What a grant gets when it asks for nothing. The sample workshop's grant
+    # deliberately omits `tokenBudget` so it inherits this, which means editing
+    # this one number changes what every running session is enforced at, with
+    # no workshop redeployed and no grant reconciled.
+    #
+    # Small on purpose so page 3 can exhaust it inside a session. A real
+    # workshop would set whatever its exercises need.
+    defaultTokenBudget: 20000
+
+    # The ceiling no workshop may exceed. A grant asking for more is clamped
+    # down to this rather than rejected: rejecting would fail every attendee's
+    # session at start, where clamping means the workshop still runs at a
+    # budget you are willing to pay for, and the grant reports that its
+    # requested value did not survive.
+    #
+    # Page 3 demonstrates this by asking for more than it.
+    maxTokenBudget: 50000
+
+    # Cost budgets, in US dollars, are the other half of this and are left
+    # unset here on purpose.
+    #
+    # They charge each request what the provider actually bills for it, so an
+    # expensive model drains the budget faster than a cheap one and the ceiling
+    # means the same thing whichever model an attendee picks. Pricing comes
+    # from agentgateway's own built-in model cost catalog.
+    #
+    # The Ollama configuration above is local and unpriced, so every request
+    # would fall back to a flat pessimistic charge rather than a real one, and
+    # the figures an attendee saw would be meaningless. Uncomment these only
+    # alongside one of the hosted providers below.
+    #
+    #   defaultCostBudget: "0.25"
+    #   maxCostBudget: "1.00"
+
   # How long the gateway waits for a complete response. Unset means
   # agentgateway's default, which is right for every hosted provider. Raise it
   # only for a slow local model: a reasoning model on a laptop can need three
