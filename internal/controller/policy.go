@@ -90,10 +90,32 @@ const unpricedRequestMicroDollars = 1000
 // descriptor is a budget silently not enforced. So the expression tests for a
 // priced cost before using it and charges the pessimistic flat fallback
 // otherwise, rather than risking an evaluation failure.
+// The field is `llm.cost.total`, not `llm.total_cost`. agentgateway's LLM CEL
+// context is camelCase and groups the realized cost under an object that is
+// itself absent when the model could not be priced, which is what the has()
+// guard tests. Verified against v1.5.0 on a cluster: an expression naming a
+// field that does not exist is an evaluation error, so the descriptor is
+// dropped and the budget silently stops being enforced rather than falling
+// back.
+// The charge is floored at the fallback rather than merely defaulted to it.
+// Two cases reach zero and both must still cost something:
+//
+//   - the model is absent from the cost catalog, so `llm.cost` is absent and
+//     the ternary takes the fallback branch
+//   - the cost object exists but prices this request at zero, or below one
+//     micro-dollar so that int() truncates it away, which is what a small
+//     workshop prompt does even against a priced model
+//
+// Without the floor the second case charges nothing, and a budget that never
+// decrements is a budget that is not enforced. Verified on a cluster: an
+// Ollama model with a rates entry yields has(llm.cost)==true and a total that
+// truncates to 0, so the ternary alone was not enough.
 func costExpression() string {
-	return `has(llm.total_cost) ? ` +
-		`int(llm.total_cost * ` + strconv.Itoa(MicroDollarsPerDollar) + `) : ` +
-		strconv.Itoa(unpricedRequestMicroDollars)
+	priced := `int(llm.cost.total * ` + strconv.Itoa(MicroDollarsPerDollar) + `)`
+	fallback := strconv.Itoa(unpricedRequestMicroDollars)
+	return `has(llm.cost) ? ` +
+		`(` + priced + ` > 0 ? ` + priced + ` : ` + fallback + `) : ` +
+		fallback
 }
 
 // MicroDollarsPerDollar mirrors the API package's constant, so the CEL

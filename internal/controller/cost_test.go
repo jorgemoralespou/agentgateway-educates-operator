@@ -61,8 +61,20 @@ func TestMicroDollarsRoundTrip(t *testing.T) {
 func TestCostExpressionGuardsAgainstUnpricedRequests(t *testing.T) {
 	expr := costExpression()
 
-	if !strings.Contains(expr, "has(llm.total_cost)") {
+	// The exact field name matters and is not guessable: agentgateway's LLM CEL
+	// context is camelCase and groups the realized cost under `llm.cost`, which
+	// is itself absent for a model that could not be priced. An expression
+	// naming a field that does not exist is an evaluation error rather than a
+	// false has(), so the descriptor is dropped and the budget silently stops
+	// being enforced. Verified against v1.5.0 on a cluster.
+	if !strings.Contains(expr, "has(llm.cost)") {
 		t.Errorf("the cost expression must test for a priced cost before using it: %s", expr)
+	}
+	if !strings.Contains(expr, "llm.cost.total") {
+		t.Errorf("the cost expression must read the realized cost from llm.cost.total: %s", expr)
+	}
+	if strings.Contains(expr, "llm.total_cost") {
+		t.Errorf("llm.total_cost does not exist in agentgateway v1.5.0: %s", expr)
 	}
 	// The fallback must be a positive flat charge. Charging nothing for what
 	// cannot be priced turns an unpriced model into an unmetered one, which is
