@@ -86,6 +86,18 @@ type ResolvedCostBudget struct {
 	// MicroDollars is the ceiling actually enforced, in micro-dollars.
 	MicroDollars int64
 
+	// Inherited reports that the grant asked for nothing and took the
+	// cluster-wide value.
+	//
+	// Unlike the token budget, an inherited cost ceiling is still pinned onto
+	// the registration, because the cost descriptor keys on that field's
+	// presence and so has no shared row to fall through to. The consequence is
+	// that editing the catalog's default cost budget does NOT reach a running
+	// session the way editing the default token budget does: the grant has to
+	// be reconciled. Recorded here so a caller can tell the two apart rather
+	// than assume the token budget's behaviour carries over.
+	Inherited bool
+
 	// Clamped reports that the grant asked for more than the catalog allows.
 	Clamped bool
 
@@ -117,12 +129,15 @@ type ResolvedCostBudget struct {
 func ResolveCostBudget(grant, catalogDefault, catalogMax string) ResolvedCostBudget {
 	resolved := ResolvedCostBudget{}
 
-	_, grantErr := ParseDollarsToMicroDollars(grant)
+	// Parsed once each, and which branch was taken is recorded rather than
+	// re-derived later: the token side already models this as Inherited, and
+	// two functions that decide the same thing should decide it the same way.
 	if v, err := ParseDollarsToMicroDollars(grant); err == nil {
 		resolved.Configured = true
 		resolved.MicroDollars = v
 	} else if v, err := ParseDollarsToMicroDollars(catalogDefault); err == nil {
 		resolved.Configured = true
+		resolved.Inherited = true
 		resolved.MicroDollars = v
 	}
 
@@ -153,7 +168,7 @@ func ResolveCostBudget(grant, catalogDefault, catalogMax string) ResolvedCostBud
 		// Only a grant that asked for too much is reported as clamped, matching
 		// how token budgets report it: a clamped default is the operator's own
 		// two settings disagreeing, not something the author did.
-		resolved.Clamped = grantErr == nil
+		resolved.Clamped = !resolved.Inherited
 	}
 
 	return resolved

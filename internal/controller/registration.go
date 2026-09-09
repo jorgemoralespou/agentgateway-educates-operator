@@ -72,23 +72,6 @@ const metadataKeyBudgetWindow = "budgetWindow"
 // compares against has to be a whole number.
 const metadataKeyCostBudget = "costBudget"
 
-// buildRegistration assembles the entry for one session's key registration.
-//
-// Holds the hash, the session name, the token budget and the expiry. No key
-// material and no provider credential: everything an orphaned registration
-// could leak is either public or already known to whoever holds the key.
-//
-// Split from the marshalling so a reconcile can compare the entry it wants
-// against the entry already published, rather than comparing serialized JSON
-// whose key order is an implementation detail of the marshaller.
-//
-// A nil tokenBudget writes no budget metadata at all. That is the mechanism by
-// which a grant inherits the cluster-wide default: with the field absent, the
-// policy's limit override falls through to the shared descriptor row, so an
-// operator editing the catalog changes what a running session is enforced at
-// without any grant being reconciled or any registration rewritten. Writing the
-// resolved number here instead would freeze it at the moment the grant was
-// last reconciled.
 // registrationInputs is everything one session's registration carries.
 //
 // A struct rather than a parameter list: four of these are optional or easily
@@ -108,6 +91,27 @@ type registrationInputs struct {
 	expiresAt time.Time
 }
 
+// buildRegistration assembles the entry for one session's key registration.
+//
+// Holds the hash, the session name, the budgets and the expiry. No key
+// material and no provider credential: everything an orphaned registration
+// could leak is either public or already known to whoever holds the key.
+//
+// Split from the marshalling so a reconcile can compare the entry it wants
+// against the entry already published, rather than comparing serialized JSON
+// whose key order is an implementation detail of the marshaller.
+//
+// A nil tokenBudget writes no budget metadata at all. That is the mechanism by
+// which a grant inherits the cluster-wide default: with the field absent, the
+// policy's limit override falls through to the shared descriptor row, so an
+// operator editing the catalog changes what a running session is enforced at
+// without any grant being reconciled or any registration rewritten. Writing the
+// resolved number here instead would freeze it at the moment the grant was
+// last reconciled.
+//
+// A cost budget has no such shared row to fall through to, since the cost
+// descriptor keys on the field's presence, so it is written whenever one
+// applies, inherited or not.
 func buildRegistration(in registrationInputs) registrationEntry {
 	metadata := map[string]string{
 		metadataKeySession: in.sessionName,
@@ -159,6 +163,11 @@ func marshalRegistration(entry registrationEntry) (string, error) {
 }
 
 // renderRegistration builds the JSON for one session's key registration.
+//
+// Kept for the tests, which assert on the serialized form and would otherwise
+// each repeat the build-then-marshal pair. The reconcile deliberately does not
+// use it: it needs the entry as well as the payload, so that it can compare
+// what it wants against what is published without going through JSON.
 func renderRegistration(keyHash, sessionName string, tokenBudget *int64, window agentgatewayv1alpha1.BudgetWindow, expiresAt time.Time) (string, error) {
 	return marshalRegistration(buildRegistration(registrationInputs{
 		keyHash:     keyHash,

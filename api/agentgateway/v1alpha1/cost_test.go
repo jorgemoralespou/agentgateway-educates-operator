@@ -139,9 +139,9 @@ func TestParseDollarsToMicroDollars(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "the largest value that still fits is accepted",
-			in:      "9223372036854.775807",
-			want:    9223372036854775807,
+			name: "the largest value that still fits is accepted",
+			in:   "9223372036854.775807",
+			want: 9223372036854775807,
 		},
 	}
 
@@ -177,6 +177,7 @@ func TestResolveCostBudget(t *testing.T) {
 		wantMicros     int64
 		wantClamped    bool
 		wantRequested  int64
+		wantInherited  bool
 	}{
 		{
 			name:           "nothing configured anywhere means no cost ceiling",
@@ -193,6 +194,7 @@ func TestResolveCostBudget(t *testing.T) {
 			catalogDefault: "0.25",
 			wantConfigured: true,
 			wantMicros:     250_000,
+			wantInherited:  true,
 		},
 		{
 			name:           "a grant's value wins over the catalog default",
@@ -223,6 +225,7 @@ func TestResolveCostBudget(t *testing.T) {
 			catalogMax:     "1.00",
 			wantConfigured: true,
 			wantMicros:     1_000_000,
+			wantInherited:  true,
 			// The operator's own two settings disagreeing, not the author's
 			// doing.
 			wantClamped: false,
@@ -240,6 +243,7 @@ func TestResolveCostBudget(t *testing.T) {
 			catalogDefault: "0.25",
 			wantConfigured: true,
 			wantMicros:     250_000,
+			wantInherited:  true,
 		},
 		{
 			name:           "a malformed value everywhere means no cost ceiling",
@@ -291,6 +295,9 @@ func TestResolveCostBudget(t *testing.T) {
 			}
 			if got.Clamped != tt.wantClamped {
 				t.Errorf("Clamped = %v, want %v", got.Clamped, tt.wantClamped)
+			}
+			if got.Inherited != tt.wantInherited {
+				t.Errorf("Inherited = %v, want %v", got.Inherited, tt.wantInherited)
 			}
 			if tt.wantClamped && got.Requested != tt.wantRequested {
 				t.Errorf("Requested = %d, want %d", got.Requested, tt.wantRequested)

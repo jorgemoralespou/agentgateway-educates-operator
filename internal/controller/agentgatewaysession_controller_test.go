@@ -637,6 +637,43 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 		// trust boundary. A grant that pinned its own budget bypasses the
 		// shared descriptor row entirely, so nothing about it changes when the
 		// catalog is edited unless the grant is reconciled.
+		// The other half of the bargain, and the property the design rests on:
+		// an inheriting grant follows the shared descriptor row, so a catalog
+		// edit must reach it without reconciling it at all. Waking every grant
+		// would make the fall-through mechanism pointless.
+		It("does not reconcile an inheriting grant when the catalog changes", func() {
+			setCatalogBudgets(&agentgatewayv1alpha1.BudgetSpec{
+				DefaultTokenBudget: agentgatewayv1alpha1.TokenBudgetValue(40000),
+			})
+			session := createSessionWithout("ws-037")
+
+			Eventually(func() metav1.ConditionStatus {
+				return sessionCondition(session, agentgatewayv1alpha1.ConditionReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			live := &agentgatewayv1alpha1.AgentGatewaySession{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-037",
+			}, live)).To(Succeed())
+			settled := live.ResourceVersion
+
+			// A different default. The shared row changes; this grant must not.
+			setCatalogBudgets(&agentgatewayv1alpha1.BudgetSpec{
+				DefaultTokenBudget: agentgatewayv1alpha1.TokenBudgetValue(70000),
+			})
+
+			Consistently(func() string {
+				got := &agentgatewayv1alpha1.AgentGatewaySession{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: workshopNamespace, Name: "ws-037",
+				}, got); err != nil {
+					return ""
+				}
+				return got.ResourceVersion
+			}, "3s", pollInterval).Should(Equal(settled),
+				"an inheriting grant must not be touched by a catalog edit")
+		})
+
 		It("re-clamps a running session when the maximum is lowered", func() {
 			setCatalogBudgets(nil)
 			createSession("ws-036") // asks for 100000

@@ -147,13 +147,13 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 	// reports cannot disagree.
 	budget := agentgatewayv1alpha1.ResolveTokenBudget(
 		session.Spec.TokenBudget,
-		catalog.catalogDefaultTokenBudget(),
-		catalog.catalogMaxTokenBudget())
+		catalog.defaultTokenBudget,
+		catalog.maxTokenBudget)
 
 	cost := agentgatewayv1alpha1.ResolveCostBudget(
 		session.Spec.CostBudget,
-		catalog.catalogDefaultCostBudget(),
-		catalog.catalogMaxCostBudget())
+		catalog.defaultCostBudget,
+		catalog.maxCostBudget)
 
 	// Clamping is reported rather than rejected: the grant still becomes Ready
 	// and the workshop still runs, at a budget the cluster operator is willing
@@ -262,9 +262,15 @@ type resolvedCatalog struct {
 	gatewayURL       string
 	gatewayNamespace string
 
-	// budgets is the cluster-wide policy grants inherit from, nil when the
-	// catalog declares none.
-	budgets *agentgatewayv1alpha1.BudgetSpec
+	// The cluster-wide budget policy grants inherit from, read through the
+	// catalog's own accessors so the nil-handling lives in one place rather
+	// than being repeated here. Absent values keep their unset spelling: nil
+	// for a token budget, empty for a cost budget, which is what the
+	// resolution functions distinguish on.
+	defaultTokenBudget *int64
+	maxTokenBudget     *int64
+	defaultCostBudget  string
+	maxCostBudget      string
 }
 
 // resolveCatalog finds the catalog and, through it, the gateway address and the
@@ -295,46 +301,13 @@ func (r *AgentGatewaySessionReconciler) resolveCatalog(ctx context.Context, sess
 	}
 
 	return resolvedCatalog{
-		gatewayURL:       catalog.Status.GatewayURL,
-		gatewayNamespace: platform.Status.GatewayNamespace,
-		budgets:          catalog.Spec.Budgets,
+		gatewayURL:         catalog.Status.GatewayURL,
+		gatewayNamespace:   platform.Status.GatewayNamespace,
+		defaultTokenBudget: catalog.CatalogDefaultTokenBudget(),
+		maxTokenBudget:     catalog.MaxTokenBudget(),
+		defaultCostBudget:  catalog.CatalogDefaultCostBudget(),
+		maxCostBudget:      catalog.MaxCostBudget(),
 	}, true, nil
-}
-
-// catalogDefaultTokenBudget is the cluster-wide default, or nil when none is
-// declared.
-func (c resolvedCatalog) catalogDefaultTokenBudget() *int64 {
-	if c.budgets == nil {
-		return nil
-	}
-	return c.budgets.DefaultTokenBudget
-}
-
-// catalogMaxTokenBudget is the cluster-wide ceiling, or nil when none is
-// imposed.
-func (c resolvedCatalog) catalogMaxTokenBudget() *int64 {
-	if c.budgets == nil {
-		return nil
-	}
-	return c.budgets.MaxTokenBudget
-}
-
-// catalogDefaultCostBudget is the cluster-wide spend default, empty when none
-// is declared.
-func (c resolvedCatalog) catalogDefaultCostBudget() string {
-	if c.budgets == nil {
-		return ""
-	}
-	return c.budgets.DefaultCostBudget
-}
-
-// catalogMaxCostBudget is the cluster-wide spend ceiling, empty when none is
-// imposed.
-func (c resolvedCatalog) catalogMaxCostBudget() string {
-	if c.budgets == nil {
-		return ""
-	}
-	return c.budgets.MaxCostBudget
 }
 
 // clampMessage names what the author asked for and what they got, for whichever
@@ -679,23 +652,45 @@ func (r *AgentGatewaySessionReconciler) SetupWithManager(mgr ctrl.Manager) error
 		Complete(r)
 }
 
-// mapCatalogToSessions wakes every grant drawing on an edited catalog.
+// mapCatalogToSessions wakes the grants an edited catalog can still reach.
 //
-// A full list rather than an index: grants are per attendee and bounded by the
-// size of a workshop, and this fires only when a cluster operator edits the
-// catalog, which is rare. An informer index would be machinery bought for a
-// cost that is not being paid.
+// Deliberately not every grant. The two halves of the budget policy reach a
+// running session by different routes, and only one of them needs a reconcile:
+//
+//   - A grant that pins nothing carries no budget on its registration, so the
+//     gateway falls through to the shared descriptor row. Editing the catalog
+//     rewrites that one ConfigMap and the change reaches the session with no
+//     grant reconciled and no registration rewritten, which is the property
+//     the design rests on.
+//   - A grant that pins its own value bypasses that row entirely. A lowered
+//     maximum cannot reach it any other way, so it has to be reconciled, or a
+//     ceiling would bind only the grants created after it was set, which is
+//     not a ceiling.
+//
+// So the mapping selects exactly the second group. Waking the first as well
+// would be harmless in effect, since their resolved budget is unchanged, but
+// it would quietly cost a reconcile per attendee on every catalog edit and
+// erase the distinction the fall-through mechanism exists to create.
 func (r *AgentGatewaySessionReconciler) mapCatalogToSessions(ctx context.Context, obj client.Object) []reconcile.Request {
 	sessions := &agentgatewayv1alpha1.AgentGatewaySessionList{}
 	if err := r.List(ctx, sessions); err != nil {
 		return nil
 	}
 
+	// A catalog offering a cost budget puts one on every grant that draws on
+	// it, inherited or not, so those grants need the reconcile too.
+	catalog, _ := obj.(*agentgatewayv1alpha1.AgentGatewayCatalog)
+	offersCost := catalog != nil && catalog.CatalogDefaultCostBudget() != ""
+
 	requests := make([]reconcile.Request, 0, len(sessions.Items))
 	for i := range sessions.Items {
 		session := &sessions.Items[i]
 		// Only the grants that actually draw on this catalog.
 		if session.CatalogName() != obj.GetName() {
+			continue
+		}
+		// Only those a catalog edit cannot reach any other way.
+		if !session.NeedsReconcileOnCatalogChange(offersCost) {
 			continue
 		}
 		requests = append(requests, reconcile.Request{

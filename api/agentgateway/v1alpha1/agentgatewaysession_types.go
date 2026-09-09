@@ -311,6 +311,35 @@ func (s *AgentGatewaySession) TokenBudget() int64 {
 	return DefaultTokenBudget
 }
 
+// NeedsReconcileOnCatalogChange reports whether a catalog edit can only reach
+// this grant by reconciling it.
+//
+// The two budgets travel to the gateway by different routes, and only one of
+// them arrives without a reconcile:
+//
+//   - A token budget the grant does not set is absent from its registration,
+//     so the gateway falls through to the shared rate-limit descriptor row.
+//     Editing the catalog rewrites that one ConfigMap and the change lands
+//     with no grant reconciled, which is the property the design rests on. A
+//     token budget the grant DOES set bypasses that row, so a lowered maximum
+//     reaches it only here.
+//   - A cost budget is pinned onto the registration either way, set or
+//     inherited, because the cost descriptor keys on that field's presence and
+//     so has no shared row to fall back to. Any cost budget at all therefore
+//     needs the reconcile.
+//
+// Anything else is left alone deliberately. Waking a grant whose resolved
+// budget cannot have changed costs a reconcile per attendee on every catalog
+// edit and erases the distinction the fall-through mechanism exists to create.
+func (s *AgentGatewaySession) NeedsReconcileOnCatalogChange(catalogOffersCostBudget bool) bool {
+	if s.Spec.TokenBudget != nil && *s.Spec.TokenBudget > 0 {
+		return true
+	}
+	// Set on the grant, or inheritable from the catalog: either way it lands
+	// on the registration and only a reconcile can move it.
+	return s.Spec.CostBudget != "" || catalogOffersCostBudget
+}
+
 // BudgetWindow returns how long this session's budget lasts, defaulted.
 //
 // Defaulted here as well as in the CRD, so a grant created before the field
