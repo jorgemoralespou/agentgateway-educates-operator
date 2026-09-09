@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -11,27 +12,121 @@ import (
 	agentgatewayv1alpha1 "github.com/educates/agentgateway-educates-operator/api/agentgateway/v1alpha1"
 )
 
-// tokenBudgetOverrideExpression reads each attendee's own token ceiling off
-// their key registration.
+// tokenBudgetOverride reads each attendee's own token ceiling off their key
+// registration.
 //
 // agentgateway's limitOverride must evaluate to an object with `unit` and
 // `requestsPerUnit`. Combined with the descriptor's `unit: Tokens`, the count
 // being limited is tokens rather than requests.
 //
-// `hour` is the window. The budget is documented as a ceiling for the session's
-// lifetime, and a workshop is shorter than that, so an hourly window is the
-// closest thing the rate-limit service offers to a lifetime cap. It does mean
-// an attendee in a session longer than an hour gets a fresh allowance, an
-// acceptable trade for a disposable workshop cluster, and the TTL bounds the
-// key's life regardless.
+// The window and the fallback are arguments rather than baked into the text:
+// the window is a per-grant choice and the fallback tracks whatever the catalog
+// or the built-in constant says the ordinary budget is. Hardcoding either put
+// two copies of one value in the tree, free to drift apart silently.
 //
 // Registration metadata is map[string]string, so the value is parsed back to an
 // integer here. A registration written by an older operator may not carry the
-// field at all, so a missing or unparseable value falls back to the default
-// rather than failing the request.
-const tokenBudgetOverrideExpression = `has(apiKey.tokenBudget) ? ` +
-	`{"unit": "hour", "requestsPerUnit": int(apiKey.tokenBudget)} : ` +
-	`{"unit": "hour", "requestsPerUnit": 100000}`
+// field at all, and a grant that inherits its budget deliberately omits it, so
+// a missing or unparseable value falls back rather than failing the request.
+//
+// The window is read off the registration too, so a per-grant window reaches
+// enforcement: the policy is one object cluster-wide and cannot hold a row per
+// attendee. A registration written by an older operator carries no window, so a
+// missing value falls back to the rendered default rather than producing an
+// empty unit the rate-limit service would reject.
+func tokenBudgetOverride(window string, fallbackBudget int64) string {
+	unit := windowExpression(window)
+	return `has(apiKey.tokenBudget) ? ` +
+		`{"unit": ` + unit + `, "requestsPerUnit": int(apiKey.tokenBudget)} : ` +
+		`{"unit": ` + unit + `, "requestsPerUnit": ` + strconv.FormatInt(fallbackBudget, 10) + `}`
+}
+
+// windowExpression reads the budget window off the registration, falling back
+// to the window the policy was rendered with.
+//
+// Shared by both overrides so the two ceilings always cover the same span: two
+// copies of this fragment could drift, and a cost budget measured over a
+// different window than the token budget beside it would be a limit nobody
+// asked for.
+func windowExpression(window string) string {
+	return `(has(apiKey.` + metadataKeyBudgetWindow + `) ? ` +
+		`apiKey.` + metadataKeyBudgetWindow + ` : "` + window + `")`
+}
+
+// costBudgetOverride reads each attendee's own spend ceiling off their key
+// registration, in micro-dollars.
+//
+// Guarded with has() like the token override, even though the descriptor's
+// entry already keys on the field's presence. An override that failed to
+// evaluate would fall back to the shared descriptor row, which is written in
+// tokens rather than micro-dollars and would enforce a ceiling unrelated to any
+// budget. The guard costs nothing and removes that coupling.
+func costBudgetOverride(window string) string {
+	unit := windowExpression(window)
+	return `has(apiKey.` + metadataKeyCostBudget + `) ? ` +
+		`{"unit": ` + unit + `, "requestsPerUnit": int(apiKey.` + metadataKeyCostBudget + `)} : ` +
+		// Unreachable while the entry keys on presence. If it ever is reached,
+		// the smallest possible ceiling is the safe direction: an unmetered
+		// attendee is the failure this feature exists to prevent.
+		`{"unit": ` + unit + `, "requestsPerUnit": 1}`
+}
+
+// unpricedRequestMicroDollars is charged against a cost budget when a request
+// could not be priced.
+//
+// agentgateway prices each request against its own built-in model cost catalog
+// and exposes the realized dollar cost to CEL, but it states plainly that a
+// request is not charged when its provider does not report the cost the budget
+// unit needs. Unpriced models are therefore a real case, not a hypothetical.
+//
+// The fallback is deliberately pessimistic rather than zero. Charging nothing
+// for what cannot be priced turns an unpriced model into an unmetered one,
+// which is the failure this feature exists to prevent. A tenth of a cent per
+// request is high enough that a runaway loop still exhausts a small budget, and
+// low enough that a workshop on a priced model never notices it.
+const unpricedRequestMicroDollars = 1000
+
+// costExpression is what each request charges against the cost budget.
+//
+// The presence test is load-bearing. agentgateway skips a descriptor whose cost
+// expression fails to evaluate or does not yield a non-negative integer, logging
+// at debug level only. That is not covered by the rate-limit failure mode, which
+// addresses the service being unreachable rather than a descriptor being
+// dropped, and there is no feedback path back to this operator: a skipped
+// descriptor is a budget silently not enforced. So the expression tests for a
+// priced cost before using it and charges the pessimistic flat fallback
+// otherwise, rather than risking an evaluation failure.
+// The field is `llm.cost.total`, not `llm.total_cost`. agentgateway's LLM CEL
+// context is camelCase and groups the realized cost under an object that is
+// itself absent when the model could not be priced, which is what the has()
+// guard tests. Verified against v1.5.0 on a cluster: an expression naming a
+// field that does not exist is an evaluation error, so the descriptor is
+// dropped and the budget silently stops being enforced rather than falling
+// back.
+// The charge is floored at the fallback rather than merely defaulted to it.
+// Two cases reach zero and both must still cost something:
+//
+//   - the model is absent from the cost catalog, so `llm.cost` is absent and
+//     the ternary takes the fallback branch
+//   - the cost object exists but prices this request at zero, or below one
+//     micro-dollar so that int() truncates it away, which is what a small
+//     workshop prompt does even against a priced model
+//
+// Without the floor the second case charges nothing, and a budget that never
+// decrements is a budget that is not enforced. Verified on a cluster: an
+// Ollama model with a rates entry yields has(llm.cost)==true and a total that
+// truncates to 0, so the ternary alone was not enough.
+func costExpression() string {
+	priced := `int(llm.cost.total * ` + strconv.Itoa(MicroDollarsPerDollar) + `)`
+	fallback := strconv.Itoa(unpricedRequestMicroDollars)
+	return `has(llm.cost) ? ` +
+		`(` + priced + ` > 0 ? ` + priced + ` : ` + fallback + `) : ` +
+		fallback
+}
+
+// MicroDollarsPerDollar mirrors the API package's constant, so the CEL
+// expression and the parsed budget scale by the same factor.
+const MicroDollarsPerDollar = agentgatewayv1alpha1.MicroDollarsPerDollar
 
 // ensurePolicy renders the single API-key policy.
 //
@@ -50,15 +145,24 @@ func (r *AgentGatewayPlatformReconciler) ensurePolicy(ctx context.Context, names
 	// controller re-renders the policy when it becomes ready.
 	failureMode := agentgatewayv1alpha1.FailClosed
 	requestTimeout := ""
+	// The fallback traces to the shared constant rather than a literal, so the
+	// value the policy falls back to and the value the accessor defaults to
+	// cannot drift apart.
+	fallbackBudget := agentgatewayv1alpha1.DefaultTokenBudget
 	catalog := &agentgatewayv1alpha1.AgentGatewayCatalog{}
 	if err := r.Get(ctx, types.NamespacedName{Name: agentgatewayv1alpha1.SingletonName}, catalog); err == nil {
 		failureMode = catalog.FailureMode()
 		requestTimeout = catalog.Spec.RequestTimeout
+		// Kept equal to the rate-limit service's descriptor row: a request
+		// whose registration carries no budget is limited by that row, and the
+		// two disagreeing would enforce one number and report another.
+		fallbackBudget = catalog.EffectiveDefaultTokenBudget()
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
 
-	spec := renderPolicySpec(failureMode, namespace, requestTimeout)
+	spec := renderPolicySpec(failureMode, namespace, requestTimeout,
+		string(agentgatewayv1alpha1.DefaultBudgetWindow), fallbackBudget)
 
 	live := newPolicy()
 	err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: PolicyName}, live)
@@ -90,7 +194,11 @@ func (r *AgentGatewayPlatformReconciler) ensurePolicy(ctx context.Context, names
 //
 // Split out as a pure function so the descriptor shape: the part that is easy
 // to get subtly wrong and expensive to debug on a cluster, is unit-testable.
-func renderPolicySpec(failureMode agentgatewayv1alpha1.RateLimitFailureMode, namespace, requestTimeout string) map[string]any {
+//
+// budgetWindow and fallbackBudget parameterize the limit override. They are
+// passed rather than read here because this function must stay pure, and
+// because the values come from a catalog the caller has already fetched.
+func renderPolicySpec(failureMode agentgatewayv1alpha1.RateLimitFailureMode, namespace, requestTimeout string, budgetWindow string, fallbackBudget int64) map[string]any {
 	spec := map[string]any{
 		// targetRefs has no namespace field: the target must be in the policy's
 		// own namespace. That restriction is the whole reason registrations
@@ -160,7 +268,38 @@ func renderPolicySpec(failureMode agentgatewayv1alpha1.RateLimitFailureMode, nam
 							// cannot hold a row per session, but each key
 							// carries its own limit and CEL reads it here
 							// (ADR-0003).
-							"limitOverride": tokenBudgetOverrideExpression,
+							"limitOverride": tokenBudgetOverride(budgetWindow, fallbackBudget),
+						},
+						// The cost descriptor, beside the token one rather than
+						// instead of it. Whichever ceiling runs out first stops
+						// the attendee.
+						//
+						// The token descriptor stays because it cannot be
+						// skipped: its cost defaults to the total token count
+						// with no CEL involved, which makes it the backstop
+						// when a cost expression fails silently.
+						map[string]any{
+							"unit": "Tokens",
+							"entries": []any{
+								map[string]any{
+									"name":       metadataKeySession,
+									"expression": "apiKey." + metadataKeySession,
+								},
+								// Keys on the cost budget's presence, so a key
+								// without one contributes no entry and this
+								// descriptor simply does not apply to it. That
+								// is what makes the cost ceiling opt-in without
+								// rendering a second policy.
+								map[string]any{
+									"name":       metadataKeyCostBudget,
+									"expression": "apiKey." + metadataKeyCostBudget,
+								},
+							},
+							// What each request charges. Unlike the token
+							// descriptor, which defaults to the token count,
+							// this one is an explicit expression.
+							"cost":          costExpression(),
+							"limitOverride": costBudgetOverride(budgetWindow),
 						},
 					},
 				},

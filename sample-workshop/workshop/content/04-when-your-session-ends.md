@@ -71,5 +71,8 @@ merely unreachable: it no longer exists anywhere.
 - One resource in a workshop definition gave every attendee their own key.
 - The key was minted for your session, budgeted independently, and never
   written into any status field.
+- That budget was not chosen by the workshop. It was inherited from a catalog
+  the cluster operator owns, bounded by a ceiling no workshop can raise, and
+  reported on the grant rather than baked into the key.
 - It is revoked by the cluster's own garbage collector, with a finalizer for
   the half garbage collection cannot reach, and a TTL behind both.

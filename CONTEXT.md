@@ -83,10 +83,28 @@ catalog, so that no credential material appears in any custom resource. Not to
 be confused with a **participant key**, which is per-session, short-lived, and
 generated here.
 
-**Token budget**: the per-session ceiling on LLM tokens, enforced by the
-Gateway against an external rate-limit service. Guards the shared **provider
-credential** against a single runaway attendee. Measured in tokens rather than
-requests because cost tracks tokens.
+**Token budget**: the per-session ceiling on LLM tokens for one **budget
+window**, enforced by the Gateway against an external rate-limit service. Guards
+the shared **provider credential** against a single runaway attendee. Measured
+in tokens rather than requests because one request with a large context can cost
+more than a hundred small ones. It counts every model's tokens the same, so a
+**cost budget** is the more precise ceiling where models differ in price; the
+token budget remains because it cannot be skipped, which makes it the backstop
+(ADR-0009).
+
+**Cost budget**: the per-session ceiling on spend for one **budget window**,
+expressed in US dollars. Priced per request by agentgateway against its own
+model cost catalog, so an expensive **catalog model** drains it faster than a
+cheap one and the ceiling means the same thing whichever model an attendee
+picks. Enforced alongside the **token budget**, never instead of it, and
+reachable without the database ADR-0001 rejected (ADR-0009).
+
+**Budget window**: how long one budget lasts before it refills, governing the
+**token budget** and the **cost budget** alike. Defaults to a day, which
+outlasts a workshop. Not a session lifetime: no lifetime-scoped budget exists in
+this stack, and windows align to the Unix epoch rather than to a session's first
+request (ADR-0009). Distinct from the grant's TTL, which expires the
+**participant key** itself.
 
 ## Terms deliberately avoided
 

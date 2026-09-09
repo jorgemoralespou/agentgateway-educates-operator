@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -93,7 +94,7 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 
 	// Resolve the catalog, which is also how the gateway address is learned,
 	// read from the platform's status, never reconstructed.
-	gatewayURL, gatewayNamespace, ready, err := r.resolveCatalog(ctx, session)
+	catalog, ready, err := r.resolveCatalog(ctx, session)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -117,7 +118,7 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 	// it does not. Generating on every pass would rotate a live attendee out of
 	// their session mid-workshop: the create-only defect inherited from the
 	// prior art, in reverse.
-	key, generated, err := r.ensureSecret(ctx, session, gatewayURL)
+	key, generated, err := r.ensureSecret(ctx, session, catalog.gatewayURL)
 	if err != nil {
 		setCondition(&session.Status.Conditions, session.Generation,
 			agentgatewayv1alpha1.ConditionSecretWritten, metav1.ConditionFalse,
@@ -142,10 +143,35 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 	// expiry an operator reads is the one the gateway actually enforces.
 	expiresAt := r.expiryFor(session)
 
+	// Resolved once, so the ceiling the gateway enforces and the one status
+	// reports cannot disagree.
+	budget := agentgatewayv1alpha1.ResolveTokenBudget(
+		session.Spec.TokenBudget,
+		catalog.defaultTokenBudget,
+		catalog.maxTokenBudget)
+
+	cost := agentgatewayv1alpha1.ResolveCostBudget(
+		session.Spec.CostBudget,
+		catalog.defaultCostBudget,
+		catalog.maxCostBudget)
+
+	// Clamping is reported rather than rejected: the grant still becomes Ready
+	// and the workshop still runs, at a budget the cluster operator is willing
+	// to pay for.
+	if budget.Clamped || cost.Clamped {
+		setCondition(&session.Status.Conditions, session.Generation,
+			agentgatewayv1alpha1.ConditionBudgetWithinLimits, metav1.ConditionFalse,
+			agentgatewayv1alpha1.ReasonBudgetClamped, clampMessage(budget, cost))
+	} else {
+		setCondition(&session.Status.Conditions, session.Generation,
+			agentgatewayv1alpha1.ConditionBudgetWithinLimits, metav1.ConditionTrue,
+			agentgatewayv1alpha1.ReasonReady, enforcedMessage(budget, cost))
+	}
+
 	// The registration carries the hash, the budget and the expiry, never key
 	// material. A lost Secret is repaired by generating a new key and updating
 	// the registration, which makes rotation the recovery path (ADR-0004).
-	if err := r.ensureRegistration(ctx, session, gatewayNamespace, key, expiresAt); err != nil {
+	if err := r.ensureRegistration(ctx, session, catalog.gatewayNamespace, key, expiresAt, budget, cost); err != nil {
 		setCondition(&session.Status.Conditions, session.Generation,
 			agentgatewayv1alpha1.ConditionKeyRegistered, metav1.ConditionFalse,
 			agentgatewayv1alpha1.ReasonFailed, err.Error())
@@ -159,14 +185,20 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 	setCondition(&session.Status.Conditions, session.Generation,
 		agentgatewayv1alpha1.ConditionKeyRegistered, metav1.ConditionTrue,
 		agentgatewayv1alpha1.ReasonReady,
-		fmt.Sprintf("key registered in %s", gatewayNamespace))
+		fmt.Sprintf("key registered in %s", catalog.gatewayNamespace))
 
 	// Status carries the Secret name and the gateway URL so the wiring can be
 	// checked by hand, and never the key or its hash, so it is safe to paste
 	// into a support conversation.
 	session.Status.SecretRef = &agentgatewayv1alpha1.SecretReference{Name: session.ResourceName()}
-	session.Status.GatewayURL = gatewayURL
+	session.Status.GatewayURL = catalog.gatewayURL
 	session.Status.ExpiresAt = &metav1.Time{Time: expiresAt}
+	session.Status.EffectiveTokenBudget = budget.Value
+	if cost.Configured {
+		session.Status.EffectiveCostBudget = formatMicroDollars(cost.MicroDollars)
+	} else {
+		session.Status.EffectiveCostBudget = ""
+	}
 	session.Status.Phase = agentgatewayv1alpha1.SessionReady
 
 	setCondition(&session.Status.Conditions, session.Generation,
@@ -220,17 +252,39 @@ func (r *AgentGatewaySessionReconciler) reject(ctx context.Context, session *age
 	return ctrl.Result{}, r.updateSessionStatus(ctx, session)
 }
 
-// resolveCatalog finds the catalog and, through it, the gateway address.
-func (r *AgentGatewaySessionReconciler) resolveCatalog(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession) (gatewayURL, gatewayNamespace string, ready bool, err error) {
+// resolvedCatalog is what one reconcile needs from the catalog and platform.
+//
+// Carried as a struct rather than as a growing tuple: the budget policy is
+// read off the same object as the gateway address, and fetching it twice would
+// let one reconcile resolve a budget against a catalog it did not use to
+// resolve the address.
+type resolvedCatalog struct {
+	gatewayURL       string
+	gatewayNamespace string
+
+	// The cluster-wide budget policy grants inherit from, read through the
+	// catalog's own accessors so the nil-handling lives in one place rather
+	// than being repeated here. Absent values keep their unset spelling: nil
+	// for a token budget, empty for a cost budget, which is what the
+	// resolution functions distinguish on.
+	defaultTokenBudget *int64
+	maxTokenBudget     *int64
+	defaultCostBudget  string
+	maxCostBudget      string
+}
+
+// resolveCatalog finds the catalog and, through it, the gateway address and the
+// budget policy.
+func (r *AgentGatewaySessionReconciler) resolveCatalog(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession) (resolved resolvedCatalog, ready bool, err error) {
 	catalog := &agentgatewayv1alpha1.AgentGatewayCatalog{}
 	if err := r.Get(ctx, types.NamespacedName{Name: session.CatalogName()}, catalog); err != nil {
 		if apierrors.IsNotFound(err) {
-			return "", "", false, nil
+			return resolvedCatalog{}, false, nil
 		}
-		return "", "", false, err
+		return resolvedCatalog{}, false, err
 	}
 	if !conditionTrue(catalog.Status.Conditions, agentgatewayv1alpha1.ConditionReady) {
-		return "", "", false, nil
+		return resolvedCatalog{}, false, nil
 	}
 
 	// The gateway namespace comes from the platform, which is where the
@@ -238,15 +292,72 @@ func (r *AgentGatewaySessionReconciler) resolveCatalog(ctx context.Context, sess
 	platform := &agentgatewayv1alpha1.AgentGatewayPlatform{}
 	if err := r.Get(ctx, types.NamespacedName{Name: agentgatewayv1alpha1.SingletonName}, platform); err != nil {
 		if apierrors.IsNotFound(err) {
-			return "", "", false, nil
+			return resolvedCatalog{}, false, nil
 		}
-		return "", "", false, err
+		return resolvedCatalog{}, false, err
 	}
 	if platform.Status.GatewayNamespace == "" {
-		return "", "", false, nil
+		return resolvedCatalog{}, false, nil
 	}
 
-	return catalog.Status.GatewayURL, platform.Status.GatewayNamespace, true, nil
+	return resolvedCatalog{
+		gatewayURL:         catalog.Status.GatewayURL,
+		gatewayNamespace:   platform.Status.GatewayNamespace,
+		defaultTokenBudget: catalog.CatalogDefaultTokenBudget(),
+		maxTokenBudget:     catalog.MaxTokenBudget(),
+		defaultCostBudget:  catalog.CatalogDefaultCostBudget(),
+		maxCostBudget:      catalog.MaxCostBudget(),
+	}, true, nil
+}
+
+// clampMessage names what the author asked for and what they got, for whichever
+// of the two budgets was brought down.
+//
+// Both numbers, because the point of surfacing the clamp is that an author can
+// see their requested value did not survive rather than debugging a limit they
+// did not set.
+func clampMessage(budget agentgatewayv1alpha1.ResolvedTokenBudget, cost agentgatewayv1alpha1.ResolvedCostBudget) string {
+	parts := []string{}
+	if budget.Clamped {
+		parts = append(parts, fmt.Sprintf(
+			"requested a token budget of %d, clamped to the catalog maximum of %d",
+			budget.Requested, budget.Value))
+	}
+	if cost.Clamped {
+		parts = append(parts, fmt.Sprintf(
+			"requested a cost budget of %s, clamped to the catalog maximum of %s",
+			formatMicroDollars(cost.Requested), formatMicroDollars(cost.MicroDollars)))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// enforcedMessage reports what the grant is actually enforced at.
+func enforcedMessage(budget agentgatewayv1alpha1.ResolvedTokenBudget, cost agentgatewayv1alpha1.ResolvedCostBudget) string {
+	msg := fmt.Sprintf("enforced at a token budget of %d", budget.Value)
+	if cost.Configured {
+		msg += fmt.Sprintf(" and a cost budget of %s", formatMicroDollars(cost.MicroDollars))
+	}
+	return msg
+}
+
+// formatMicroDollars renders a micro-dollar amount back as dollars, for a human
+// reading a condition.
+//
+// Rendered with integer arithmetic rather than a float, for the same reason the
+// parsing avoids one: the value is exact and should stay that way.
+func formatMicroDollars(micros int64) string {
+	whole := micros / agentgatewayv1alpha1.MicroDollarsPerDollar
+	frac := micros % agentgatewayv1alpha1.MicroDollarsPerDollar
+	if frac == 0 {
+		return fmt.Sprintf("$%d.00", whole)
+	}
+	// Six digits, then trailing zeros trimmed, so "$0.50" does not read as
+	// "$0.500000".
+	s := strings.TrimRight(fmt.Sprintf("%06d", frac), "0")
+	if len(s) < 2 {
+		s += "0"
+	}
+	return fmt.Sprintf("$%d.%s", whole, s)
 }
 
 // ensureSecret returns the attendee's key, generating one only when the Secret
@@ -382,11 +493,36 @@ func (r *AgentGatewaySessionReconciler) sessionNamespaceName(session *agentgatew
 // attendee: thirty concurrent workshop starts would otherwise contend on a
 // single hot object, and duplicate keys across ConfigMaps are documented
 // upstream as undefined.
-func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession, gatewayNamespace, key string, expiresAt time.Time) error {
+func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession, gatewayNamespace, key string, expiresAt time.Time, budget agentgatewayv1alpha1.ResolvedTokenBudget, cost agentgatewayv1alpha1.ResolvedCostBudget) error {
 	name := session.ResourceName()
 	hash := participantkey.Hash(key)
 
-	payload, err := renderRegistration(hash, session.Name, session.TokenBudget(), expiresAt)
+	// An inherited budget is written as no budget at all, so the gateway falls
+	// through to the shared descriptor row and a later catalog edit reaches
+	// this session without it being reconciled. Only a budget the grant asked
+	// for itself is pinned onto the registration.
+	var registered *int64
+	if !budget.Inherited {
+		registered = &budget.Value
+	}
+
+	// The cost ceiling is always pinned when one applies: unlike the token
+	// budget it has no shared descriptor row to fall through to, because the
+	// cost descriptor keys on this field's presence.
+	var registeredCost *int64
+	if cost.Configured {
+		registeredCost = &cost.MicroDollars
+	}
+
+	desiredEntry := buildRegistration(registrationInputs{
+		keyHash:          hash,
+		sessionName:      session.Name,
+		tokenBudget:      registered,
+		costMicroDollars: registeredCost,
+		window:           session.BudgetWindow(),
+		expiresAt:        expiresAt,
+	})
+	payload, err := marshalRegistration(desiredEntry)
 	if err != nil {
 		return err
 	}
@@ -428,10 +564,20 @@ func (r *AgentGatewaySessionReconciler) ensureRegistration(ctx context.Context, 
 		return getErr
 	}
 
-	// Only rewritten when the hash has actually changed, so an unchanged
-	// reconcile does no writes at all.
+	// Compared on the whole rendered entry, not just the hash: the budget and
+	// the expiry ride in the metadata, and comparing the hash alone would
+	// render a corrected payload and then discard it, leaving the gateway
+	// enforcing a ceiling the grant no longer asks for.
+	//
+	// Still a comparison rather than an unconditional write, so a reconcile
+	// that changes nothing does no write at all and the gateway is not made to
+	// reload a ConfigMap it is watching.
+	//
+	// Note this never rotates a key on its own: the hash is derived from the
+	// key the reconcile already holds, so a metadata-only change rewrites the
+	// entry around an unchanged hash.
 	if existing, ok := live.Data[session.Name]; ok {
-		if entry, err := parseRegistration(existing); err == nil && entry.KeyHash == hash {
+		if entry, err := parseRegistration(existing); err == nil && entry.equals(desiredEntry) {
 			return nil
 		}
 	}
@@ -490,8 +636,71 @@ func (r *AgentGatewaySessionReconciler) SetupWithManager(mgr ctrl.Manager) error
 		// would never be repaired.
 		Watches(&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(mapSecretToSession)).
+		// A lowered maximum has to reach grants that already pinned a budget
+		// above it. Those grants bypass the shared descriptor row entirely,
+		// carrying their own ceiling on their own registration, so unlike an
+		// edited *default* nothing about them changes until they are
+		// reconciled. Without this watch the trust boundary would hold only for
+		// grants created after the edit, which is not a trust boundary.
+		//
+		// Deliberately no GenerationChangedPredicate: the budget block lives in
+		// spec, so a generation change is exactly what this needs to see, and
+		// the mapping already narrows it to the one catalog that matters.
+		Watches(&agentgatewayv1alpha1.AgentGatewayCatalog{},
+			handler.EnqueueRequestsFromMapFunc(r.mapCatalogToSessions)).
 		Named("agentgatewaysession").
 		Complete(r)
+}
+
+// mapCatalogToSessions wakes the grants an edited catalog can still reach.
+//
+// Deliberately not every grant. The two halves of the budget policy reach a
+// running session by different routes, and only one of them needs a reconcile:
+//
+//   - A grant that pins nothing carries no budget on its registration, so the
+//     gateway falls through to the shared descriptor row. Editing the catalog
+//     rewrites that one ConfigMap and the change reaches the session with no
+//     grant reconciled and no registration rewritten, which is the property
+//     the design rests on.
+//   - A grant that pins its own value bypasses that row entirely. A lowered
+//     maximum cannot reach it any other way, so it has to be reconciled, or a
+//     ceiling would bind only the grants created after it was set, which is
+//     not a ceiling.
+//
+// So the mapping selects exactly the second group. Waking the first as well
+// would be harmless in effect, since their resolved budget is unchanged, but
+// it would quietly cost a reconcile per attendee on every catalog edit and
+// erase the distinction the fall-through mechanism exists to create.
+func (r *AgentGatewaySessionReconciler) mapCatalogToSessions(ctx context.Context, obj client.Object) []reconcile.Request {
+	sessions := &agentgatewayv1alpha1.AgentGatewaySessionList{}
+	if err := r.List(ctx, sessions); err != nil {
+		return nil
+	}
+
+	// A catalog offering a cost budget puts one on every grant that draws on
+	// it, inherited or not, so those grants need the reconcile too.
+	catalog, _ := obj.(*agentgatewayv1alpha1.AgentGatewayCatalog)
+	offersCost := catalog != nil && catalog.CatalogDefaultCostBudget() != ""
+
+	requests := make([]reconcile.Request, 0, len(sessions.Items))
+	for i := range sessions.Items {
+		session := &sessions.Items[i]
+		// Only the grants that actually draw on this catalog.
+		if session.CatalogName() != obj.GetName() {
+			continue
+		}
+		// Only those a catalog edit cannot reach any other way.
+		if !session.NeedsReconcileOnCatalogChange(offersCost) {
+			continue
+		}
+		requests = append(requests, reconcile.Request{
+			NamespacedName: types.NamespacedName{
+				Namespace: session.Namespace,
+				Name:      session.Name,
+			},
+		})
+	}
+	return requests
 }
 
 // mapSecretToSession routes a participant key Secret back to its grant.

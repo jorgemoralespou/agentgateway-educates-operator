@@ -4,7 +4,16 @@ Date: 2026-09-03
 
 ## Status
 
-Accepted
+Accepted, amended by
+[ADR-0009](0009-cost-budgets-without-a-database.md).
+
+ADR-0009 does not overturn the decision below. It records that a *cost* ceiling
+turned out to be reachable without a database, through the same global
+rate-limit path chosen here, and corrects the enforcement window: what shipped
+was hourly rather than the session-lifetime cap the grant documented, and no
+lifetime-scoped budget exists in this stack. The rejection of agentgateway's
+per-key budgets stands: they remain SQLite-backed and absent from the
+Kubernetes CRDs.
 
 ## Context
 

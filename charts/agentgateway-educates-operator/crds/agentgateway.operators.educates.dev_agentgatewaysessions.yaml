@@ -63,6 +63,39 @@ spec:
               asymmetric (ADR-0002), and a grant in a session namespace is rejected rather
               than reconciled.
             properties:
+              budgetWindow:
+                default: day
+                description: |-
+                  BudgetWindow is how long one budget lasts before it refills. It governs
+                  the token budget and the cost budget alike, so the two always cover the
+                  same span.
+
+                  Defaults to a day, which is longer than any workshop, so in practice an
+                  attendee gets one budget for their whole session. Before this field
+                  existed the window was an hour, so an attendee in a two-hour workshop
+                  silently received two full budgets.
+
+                  Deliberately separate from TTL, which is the key's expiry backstop and
+                  keeps its own free-form duration. The two answer different questions:
+                  how long a budget lasts, and how long a key works at all. Restricting TTL
+                  to these units was considered and rejected, since it would make the
+                  current default illegal and trade the expiry guarantee for the rate
+                  limiter's vocabulary.
+
+                  One residual is accepted rather than engineered around: windows are
+                  aligned to the Unix epoch, not to a session's first request. A daily
+                  window resets at midnight UTC, so a workshop spanning midnight yields two
+                  budgets. The guarantee is "at most one reset", not "no reset", and the
+                  expiry sweep bounds the exposure because a session past its TTL cannot
+                  spend the second budget.
+                enum:
+                - second
+                - minute
+                - hour
+                - day
+                - month
+                - year
+                type: string
               catalogRef:
                 description: CatalogRef names the catalog this session's models come
                   from.
@@ -75,13 +108,50 @@ spec:
                     minLength: 1
                     type: string
                 type: object
-              tokenBudget:
-                default: 100000
+              costBudget:
                 description: |-
-                  TokenBudget is the ceiling on LLM tokens for this session's lifetime.
+                  CostBudget is the ceiling on spend for one budget window, in US dollars.
+
+                  A decimal string, "0.50", not a number: a floating-point field in a
+                  custom resource would admit representation errors into a value compared
+                  for equality. It is parsed exactly and enforced in micro-dollars.
+
+                  Where TokenBudget counts every model's tokens the same, this charges each
+                  request what the provider actually bills for it, so an expensive model
+                  drains the budget faster than a cheap one and the ceiling means the same
+                  thing whichever model an attendee picks.
+
+                  A cost budget is enforced *alongside* the token budget, not instead of
+                  it: whichever runs out first stops the attendee. The token budget stays
+                  the backstop, because a cost expression can fail to evaluate and be
+                  skipped silently.
+
+                  Unset means no cost ceiling, and the token budget alone applies.
+                pattern: ^(0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(\.[0-9]+)?)$
+                type: string
+              tokenBudget:
+                description: |-
+                  TokenBudget is the ceiling on LLM tokens for one budget window, which
+                  defaults to a day. See BudgetWindow.
+
+                  Not a ceiling for the session's lifetime: no lifetime-scoped budget
+                  exists in this stack. The window is what is actually enforced, and it is
+                  chosen to be longer than a workshop so that in practice one budget covers
+                  one session.
 
                   Measured in tokens rather than requests because cost tracks tokens: one
                   request with a large context can cost more than a hundred small ones.
+
+                  An override, not a setting: leave it unset and the session inherits the
+                  ordinary budget the cluster operator configured. A pointer with no schema
+                  default so that "unset" survives the round trip through the API server;
+                  with a stamped default the controller cannot tell an omitted field from
+                  one asking for exactly the default, and no inherited value could ever
+                  take effect.
+
+                  Zero is not a legal value. A client that strips zero values would
+                  otherwise register a ceiling of no tokens at all, and every request the
+                  attendee makes would be rejected.
                 format: int64
                 minimum: 1
                 type: integer
@@ -164,6 +234,28 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              effectiveCostBudget:
+                description: |-
+                  EffectiveCostBudget is the spend ceiling actually enforced, in US
+                  dollars, after the grant's own value, the catalog's default and the
+                  catalog's maximum have been resolved.
+
+                  Empty when no cost ceiling applies, which is the ordinary case: this
+                  project maintains no pricing data and imposes no spend ceiling of its
+                  own.
+                type: string
+              effectiveTokenBudget:
+                description: |-
+                  EffectiveTokenBudget is the ceiling actually enforced, after the grant's
+                  own value, the catalog's default and the built-in constant have been
+                  resolved.
+
+                  Reported because a grant that inherits its budget carries no budget on
+                  its registration, so the registration no longer shows what an attendee
+                  is enforced at. This is the object an operator reaches for first when
+                  asking why an attendee got a 429.
+                format: int64
+                type: integer
               expiresAt:
                 description: |-
                   ExpiresAt is when the participant key stops working regardless of whether

@@ -93,6 +93,16 @@ type AgentGatewayCatalogSpec struct {
 	// +optional
 	RateLimit *RateLimitSpec `json:"rateLimit,omitempty"`
 
+	// Budgets declares the cluster-wide budget policy every grant inherits
+	// from.
+	//
+	// On the catalog for the same reason the rate-limit failure mode is: it is
+	// a choice about serving LLM traffic, which is what the catalog governs,
+	// and the person who owns the provider credential and pays the invoice is
+	// the person who edits this object.
+	// +optional
+	Budgets *BudgetSpec `json:"budgets,omitempty"`
+
 	// RequestTimeout is how long the gateway waits for a complete response from
 	// an upstream model.
 	//
@@ -107,6 +117,65 @@ type AgentGatewayCatalogSpec struct {
 	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$`
 	// +optional
 	RequestTimeout string `json:"requestTimeout,omitempty"`
+}
+
+// BudgetSpec is the cluster-wide budget policy grants inherit from.
+//
+// Every field is optional and absent means "no opinion", so a catalog that
+// declares no budgets behaves exactly as one written before this block
+// existed.
+type BudgetSpec struct {
+	// DefaultTokenBudget is the ceiling applied to a grant that does not ask
+	// for a specific one.
+	//
+	// Changing it takes effect for running sessions that set no budget of
+	// their own, without any grant being reconciled. That falls out of how the
+	// value reaches the gateway rather than from a watch: an inheriting grant's
+	// registration carries no budget metadata at all, so the gateway falls
+	// through to the descriptor row in the shared rate-limit configuration,
+	// and this field is what renders that row.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	DefaultTokenBudget *int64 `json:"defaultTokenBudget,omitempty"`
+
+	// MaxTokenBudget is the most any grant may be enforced at.
+	//
+	// This is the trust boundary: the person who owns the provider credential
+	// and pays for it decides the ceiling, and a workshop author writing
+	// session.objects cannot exceed it.
+	//
+	// A grant asking for more is clamped, not rejected. Rejecting would fail
+	// every attendee's session at start, where clamping means the workshop
+	// still runs, at a budget the operator is willing to pay for. The clamp is
+	// reported on the grant's status so an author can see their requested value
+	// did not survive, rather than spending a workshop wondering why attendees
+	// hit a limit earlier than planned.
+	//
+	// Left unset, nothing is clamped, so this stays opt-in for operators who do
+	// not need it.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MaxTokenBudget *int64 `json:"maxTokenBudget,omitempty"`
+
+	// DefaultCostBudget is the spend ceiling applied to a grant that does not
+	// ask for a specific one, in US dollars.
+	//
+	// A decimal string for the same reason the grant's is: no floating-point
+	// field belongs in a custom resource. Unset means grants inherit no cost
+	// ceiling, and the token budget alone applies to them.
+	// +kubebuilder:validation:Pattern=`^(0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(\.[0-9]+)?)$`
+	// +optional
+	DefaultCostBudget string `json:"defaultCostBudget,omitempty"`
+
+	// MaxCostBudget is the most any grant may spend in one window, in US
+	// dollars.
+	//
+	// The cost half of the same trust boundary MaxTokenBudget draws, and it
+	// clamps rather than rejects for the same reason. Left unset, nothing is
+	// clamped.
+	// +kubebuilder:validation:Pattern=`^(0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(\.[0-9]+)?)$`
+	// +optional
+	MaxCostBudget string `json:"maxCostBudget,omitempty"`
 }
 
 // CatalogPhase is an advisory summary. Conditions are authoritative.

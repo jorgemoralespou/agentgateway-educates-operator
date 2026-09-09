@@ -25,14 +25,77 @@ type AgentGatewaySessionSpec struct {
 	// +optional
 	CatalogRef CatalogReference `json:"catalogRef,omitempty"`
 
-	// TokenBudget is the ceiling on LLM tokens for this session's lifetime.
+	// TokenBudget is the ceiling on LLM tokens for one budget window, which
+	// defaults to a day. See BudgetWindow.
+	//
+	// Not a ceiling for the session's lifetime: no lifetime-scoped budget
+	// exists in this stack. The window is what is actually enforced, and it is
+	// chosen to be longer than a workshop so that in practice one budget covers
+	// one session.
 	//
 	// Measured in tokens rather than requests because cost tracks tokens: one
 	// request with a large context can cost more than a hundred small ones.
+	//
+	// An override, not a setting: leave it unset and the session inherits the
+	// ordinary budget the cluster operator configured. A pointer with no schema
+	// default so that "unset" survives the round trip through the API server;
+	// with a stamped default the controller cannot tell an omitted field from
+	// one asking for exactly the default, and no inherited value could ever
+	// take effect.
+	//
+	// Zero is not a legal value. A client that strips zero values would
+	// otherwise register a ceiling of no tokens at all, and every request the
+	// attendee makes would be rejected.
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=100000
 	// +optional
-	TokenBudget int64 `json:"tokenBudget,omitempty"`
+	TokenBudget *int64 `json:"tokenBudget,omitempty"`
+
+	// CostBudget is the ceiling on spend for one budget window, in US dollars.
+	//
+	// A decimal string, "0.50", not a number: a floating-point field in a
+	// custom resource would admit representation errors into a value compared
+	// for equality. It is parsed exactly and enforced in micro-dollars.
+	//
+	// Where TokenBudget counts every model's tokens the same, this charges each
+	// request what the provider actually bills for it, so an expensive model
+	// drains the budget faster than a cheap one and the ceiling means the same
+	// thing whichever model an attendee picks.
+	//
+	// A cost budget is enforced *alongside* the token budget, not instead of
+	// it: whichever runs out first stops the attendee. The token budget stays
+	// the backstop, because a cost expression can fail to evaluate and be
+	// skipped silently.
+	//
+	// Unset means no cost ceiling, and the token budget alone applies.
+	// +kubebuilder:validation:Pattern=`^(0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(\.[0-9]+)?)$`
+	// +optional
+	CostBudget string `json:"costBudget,omitempty"`
+
+	// BudgetWindow is how long one budget lasts before it refills. It governs
+	// the token budget and the cost budget alike, so the two always cover the
+	// same span.
+	//
+	// Defaults to a day, which is longer than any workshop, so in practice an
+	// attendee gets one budget for their whole session. Before this field
+	// existed the window was an hour, so an attendee in a two-hour workshop
+	// silently received two full budgets.
+	//
+	// Deliberately separate from TTL, which is the key's expiry backstop and
+	// keeps its own free-form duration. The two answer different questions:
+	// how long a budget lasts, and how long a key works at all. Restricting TTL
+	// to these units was considered and rejected, since it would make the
+	// current default illegal and trade the expiry guarantee for the rate
+	// limiter's vocabulary.
+	//
+	// One residual is accepted rather than engineered around: windows are
+	// aligned to the Unix epoch, not to a session's first request. A daily
+	// window resets at midnight UTC, so a workshop spanning midnight yields two
+	// budgets. The guarantee is "at most one reset", not "no reset", and the
+	// expiry sweep bounds the exposure because a session past its TTL cannot
+	// spend the second budget.
+	// +kubebuilder:default=day
+	// +optional
+	BudgetWindow BudgetWindow `json:"budgetWindow,omitempty"`
 
 	// TTL is a backstop expiry on the participant key, independent of any
 	// cleanup path.
@@ -45,6 +108,27 @@ type AgentGatewaySessionSpec struct {
 	// +optional
 	TTL string `json:"ttl,omitempty"`
 }
+
+// BudgetWindow is how long one budget lasts before it refills.
+//
+// The legal values are exactly the units the rate-limit service accepts, so
+// what an author writes reaches the descriptor unchanged rather than being
+// translated into a vocabulary the enforcement does not share.
+// +kubebuilder:validation:Enum=second;minute;hour;day;month;year
+type BudgetWindow string
+
+const (
+	BudgetWindowSecond BudgetWindow = "second"
+	BudgetWindowMinute BudgetWindow = "minute"
+	BudgetWindowHour   BudgetWindow = "hour"
+	BudgetWindowDay    BudgetWindow = "day"
+	BudgetWindowMonth  BudgetWindow = "month"
+	BudgetWindowYear   BudgetWindow = "year"
+)
+
+// DefaultBudgetWindow is the window applied when a grant does not set one.
+// Matches the CRD's own default, so the two cannot drift.
+const DefaultBudgetWindow = BudgetWindowDay
 
 // SessionPhase is an advisory summary. Conditions are authoritative.
 // +kubebuilder:validation:Enum=Pending;Ready;Failed;Rejected;Terminating
@@ -97,6 +181,27 @@ type AgentGatewaySessionStatus struct {
 	// any cleanup ran.
 	// +optional
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// EffectiveTokenBudget is the ceiling actually enforced, after the grant's
+	// own value, the catalog's default and the built-in constant have been
+	// resolved.
+	//
+	// Reported because a grant that inherits its budget carries no budget on
+	// its registration, so the registration no longer shows what an attendee
+	// is enforced at. This is the object an operator reaches for first when
+	// asking why an attendee got a 429.
+	// +optional
+	EffectiveTokenBudget int64 `json:"effectiveTokenBudget,omitempty"`
+
+	// EffectiveCostBudget is the spend ceiling actually enforced, in US
+	// dollars, after the grant's own value, the catalog's default and the
+	// catalog's maximum have been resolved.
+	//
+	// Empty when no cost ceiling applies, which is the ordinary case: this
+	// project maintains no pricing data and imposes no spend ceiling of its
+	// own.
+	// +optional
+	EffectiveCostBudget string `json:"effectiveCostBudget,omitempty"`
 }
 
 // AgentGatewaySession is one attendee's access to the Gateway for the duration
@@ -176,25 +281,75 @@ func (s *AgentGatewaySession) ResourceName() string {
 	return s.Name + SecretSuffix
 }
 
-// DefaultTokenBudget is the ceiling applied when a grant does not set one.
-// Matches the CRD's own default, so the two cannot drift.
+// DefaultTokenBudget is the ceiling applied when a grant does not set one and
+// no cluster-wide default is configured either. The last link in the
+// resolution chain, and the only one that cannot itself be absent.
 const DefaultTokenBudget int64 = 100000
 
 // DefaultTTL is the backstop expiry applied when a grant does not set one.
 // Matches the CRD's own default, so the two cannot drift.
 const DefaultTTL = "4h"
 
+// TokenBudgetValue is a convenience for setting the nil-able budget, so
+// callers writing a grant do not each declare their own local for the address
+// of a literal.
+func TokenBudgetValue(v int64) *int64 {
+	return &v
+}
+
 // TokenBudget returns the session's token ceiling, defaulted.
 //
-// Defaulted here as well as in the CRD because a grant created before the
-// default existed, or through a client that strips zero values, would otherwise
-// register a budget of zero, which the gateway would read as "no tokens at
-// all" and reject every request the attendee makes.
+// The schema no longer stamps a default, so this accessor is where an omitted
+// budget acquires one. Zero is rejected by validation rather than treated as a
+// value, so a field stripped by a client that drops zero values arrives here as
+// genuinely absent and resolves to the default, instead of registering a
+// ceiling of no tokens at all.
 func (s *AgentGatewaySession) TokenBudget() int64 {
-	if s.Spec.TokenBudget > 0 {
-		return s.Spec.TokenBudget
+	if s.Spec.TokenBudget != nil && *s.Spec.TokenBudget > 0 {
+		return *s.Spec.TokenBudget
 	}
 	return DefaultTokenBudget
+}
+
+// NeedsReconcileOnCatalogChange reports whether a catalog edit can only reach
+// this grant by reconciling it.
+//
+// The two budgets travel to the gateway by different routes, and only one of
+// them arrives without a reconcile:
+//
+//   - A token budget the grant does not set is absent from its registration,
+//     so the gateway falls through to the shared rate-limit descriptor row.
+//     Editing the catalog rewrites that one ConfigMap and the change lands
+//     with no grant reconciled, which is the property the design rests on. A
+//     token budget the grant DOES set bypasses that row, so a lowered maximum
+//     reaches it only here.
+//   - A cost budget is pinned onto the registration either way, set or
+//     inherited, because the cost descriptor keys on that field's presence and
+//     so has no shared row to fall back to. Any cost budget at all therefore
+//     needs the reconcile.
+//
+// Anything else is left alone deliberately. Waking a grant whose resolved
+// budget cannot have changed costs a reconcile per attendee on every catalog
+// edit and erases the distinction the fall-through mechanism exists to create.
+func (s *AgentGatewaySession) NeedsReconcileOnCatalogChange(catalogOffersCostBudget bool) bool {
+	if s.Spec.TokenBudget != nil && *s.Spec.TokenBudget > 0 {
+		return true
+	}
+	// Set on the grant, or inheritable from the catalog: either way it lands
+	// on the registration and only a reconcile can move it.
+	return s.Spec.CostBudget != "" || catalogOffersCostBudget
+}
+
+// BudgetWindow returns how long this session's budget lasts, defaulted.
+//
+// Defaulted here as well as in the CRD, so a grant created before the field
+// existed gets the same window as one created after it, rather than an empty
+// unit the rate-limit service would reject.
+func (s *AgentGatewaySession) BudgetWindow() BudgetWindow {
+	if s.Spec.BudgetWindow != "" {
+		return s.Spec.BudgetWindow
+	}
+	return DefaultBudgetWindow
 }
 
 func init() {

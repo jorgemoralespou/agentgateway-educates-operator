@@ -315,9 +315,147 @@ only resolves within its own namespace. The operator rejects a misplaced grant
 with `PlacementValid=False` and a message naming the fix, rather than failing
 silently.
 
-`tokenBudget` defaults to 100000 and `ttl` to `4h`.
+`ttl` defaults to `4h`.
+
+`tokenBudget` is an override, not a setting. Leave it out and the session
+inherits whatever the cluster operator configured on the catalog, so the
+workshop follows the cluster rather than freezing a number into the workshop
+definition. See [Budgets](#budgets) below.
 
 A complete working example is in [`sample-workshop/`](../sample-workshop/).
+
+## Budgets
+
+The cluster operator declares the ordinary budget once, on the catalog, and
+every grant that does not ask for something specific inherits it:
+
+```yaml
+apiVersion: agentgateway.operators.educates.dev/v1alpha1
+kind: AgentGatewayCatalog
+metadata:
+  name: cluster
+spec:
+  budgets:
+    defaultTokenBudget: 50000
+    maxTokenBudget: 200000
+  models:
+    - name: fast
+      # ...
+```
+
+With no `budgets` block at all, the built-in default of 100000 tokens applies,
+so a catalog written before this block existed behaves exactly as it did.
+
+`maxTokenBudget` is the trust boundary: the person who owns the provider
+credential and pays for it decides the ceiling, and a workshop author writing
+`session.objects` cannot exceed it. A grant asking for more is **clamped, not
+rejected**, because rejecting would fail every attendee's session at start,
+where clamping means the workshop still runs at a budget you are willing to pay
+for. The clamp is visible on the grant:
+
+```console
+$ kubectl get agentgatewaysession ws-001 -n educates-labs-w01 \
+    -o jsonpath='{range .status.conditions[?(@.type=="BudgetWithinLimits")]}{.message}{"\n"}{end}'
+requested a token budget of 500000, clamped to the catalog maximum of 200000
+```
+
+The maximum bounds `defaultTokenBudget` too, so you cannot configure a default
+that exceeds your own ceiling. Left unset, nothing is clamped.
+
+### The budget window
+
+A token budget is a ceiling per **window**, not per session lifetime: no
+lifetime-scoped budget exists anywhere in this stack. `budgetWindow` on the
+grant says how long one budget lasts, and defaults to `day`, which outlasts any
+workshop:
+
+```yaml
+spec:
+  tokenBudget: 20000
+  budgetWindow: day     # second, minute, hour, day, month, year
+```
+
+Before this field existed the window was hourly while the field was documented
+as a session-lifetime cap, so an attendee in a two-hour workshop quietly
+received two full budgets.
+
+`budgetWindow` and `ttl` are independent. `ttl` remains the backstop expiry on
+the key itself, keeps its free-form duration (`4h`, `90m`), and is what protects
+you when a force-deleted namespace orphans a registration. Changing one does not
+change the other.
+
+**Windows are aligned to the Unix epoch, not to a session's first request.** A
+daily window resets at midnight UTC, so a workshop running across midnight
+yields two budgets. The guarantee is "at most one reset", not "no reset", and
+`ttl` bounds the exposure because a session past its expiry cannot spend the
+second budget. If a workshop is scheduled across midnight UTC and that matters,
+set a smaller `tokenBudget` or a longer window.
+
+### Cost budgets
+
+A token budget counts every model's tokens the same, so an attendee on an
+expensive model costs far more than one on a cheap model for the same ceiling. A
+**cost budget** is expressed in the unit the provider actually invoices in, so
+the ceiling means the same thing whichever model an attendee picks:
+
+```yaml
+spec:
+  tokenBudget: 20000
+  costBudget: "0.50"     # US dollars, as a string
+```
+
+Cluster operators set a default and a maximum the same way as for tokens:
+
+```yaml
+spec:
+  budgets:
+    defaultCostBudget: "0.25"
+    maxCostBudget: "1.00"
+```
+
+Values are decimal **strings**, not numbers. A floating-point field in a custom
+resource would admit representation errors into a value compared for equality.
+They are parsed exactly and enforced in micro-dollars, which is the grain
+agentgateway prices requests at; whole cents would round most individual
+requests to zero.
+
+A cost budget is enforced **alongside** the token budget, never instead of it.
+Whichever runs out first stops the attendee. The token budget stays because it
+is the backstop: agentgateway skips a rate-limit descriptor whose cost
+expression fails to evaluate, logging at debug level only, with no feedback path
+back to this operator, and the token descriptor uses no expression at all so it
+cannot be skipped.
+
+Pricing comes from agentgateway's own built-in model cost catalog. This project
+maintains no pricing data. A request whose provider does not report a cost that
+can be priced is charged a flat pessimistic fallback of $0.001 rather than
+nothing, since charging nothing for an unpriced model would turn it into an
+unmetered one.
+
+Left unset everywhere, no cost ceiling applies and only the token budget
+enforces. The resolved value appears on the grant:
+
+```console
+$ kubectl get agentgatewaysession ws-001 -n educates-labs-w01 \
+    -o jsonpath='{.status.effectiveCostBudget}{"\n"}'
+$0.50
+```
+
+Changing `defaultTokenBudget` takes effect for sessions that are already
+running and did not set a budget of their own. That is not a fan-out across
+grants: a grant that inherits its budget carries none on its key registration,
+so the gateway falls through to the shared rate-limit configuration, and only
+that one object is rewritten.
+
+The consequence worth knowing: an inheriting grant's registration does not show
+what it is enforced at. Read the grant's status instead, which reports the
+resolved value:
+
+```console
+$ kubectl get agentgatewaysession ws-001 -n educates-labs-w01 \
+    -o jsonpath='{.status.effectiveTokenBudget}{"\n"}'
+50000
+```
 
 ## Exposing the gateway UI
 
