@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -119,6 +120,23 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 	// their session mid-workshop: the create-only defect inherited from the
 	// prior art, in reverse.
 	key, generated, err := r.ensureSecret(ctx, session, catalog.gatewayURL)
+	if errors.Is(err, errSessionEnding) {
+		// Not a failure. The attendee's namespace is going away, so the key is
+		// meant to stop existing; minting a replacement would resurrect a live
+		// credential the garbage collector has just removed, and leave it
+		// unowned because there is no longer a namespace to own it.
+		//
+		// Reported as Terminating rather than Failed, and not requeued: the
+		// grant's own deletion follows, and the finalizer removes the
+		// registration then.
+		log.Info("session namespace is terminating, so no key was minted",
+			"session", session.Name, "namespace", session.Namespace)
+		setCondition(&session.Status.Conditions, session.Generation,
+			agentgatewayv1alpha1.ConditionSecretWritten, metav1.ConditionFalse,
+			agentgatewayv1alpha1.ReasonUninstalling, err.Error())
+		session.Status.Phase = agentgatewayv1alpha1.SessionTerminating
+		return ctrl.Result{}, r.updateSessionStatus(ctx, session)
+	}
 	if err != nil {
 		setCondition(&session.Status.Conditions, session.Generation,
 			agentgatewayv1alpha1.ConditionSecretWritten, metav1.ConditionFalse,
@@ -360,6 +378,44 @@ func formatMicroDollars(micros int64) string {
 	return fmt.Sprintf("$%d.%s", whole, s)
 }
 
+// errSessionEnding says the session namespace is gone or terminating, so no
+// key should be minted.
+//
+// A sentinel rather than a bare error because the caller treats it as an
+// ordinary end state rather than a failure: the grant is on its way out, and
+// reporting Failed on a session that is simply over would be noise in exactly
+// the place an operator looks when something has actually broken.
+var errSessionEnding = errors.New("the session namespace is terminating, so no key is minted")
+
+// sessionNamespaceEnding reports whether this grant's session has ended, so no
+// key should be minted for it.
+//
+// True only when the namespace exists and is terminating. A namespace that is
+// simply absent is NOT teardown: a grant created outside Educates never has
+// one, and setSessionNamespaceOwner already handles that by leaving the Secret
+// to be collected with the workshop namespace instead. Treating absence as
+// teardown stops those grants ever being repaired, which is a worse failure
+// than the one being fixed.
+//
+// That leaves a window this cannot close on its own. Once the namespace object
+// is fully gone, a repair can still mint an unowned Secret. What bounds it is
+// the grant's own deletion, which follows a session ending: the reconcile
+// returns early on DeletionTimestamp, the finalizer removes the registration,
+// and the expiry sweep revokes anything that outlives both. The window is the
+// gap between the namespace disappearing and the grant being deleted, and a
+// Secret minted inside it is removed when the workshop namespace goes.
+func (r *AgentGatewaySessionReconciler) sessionNamespaceEnding(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession) (bool, error) {
+	ns := &corev1.Namespace{}
+	err := r.Get(ctx, types.NamespacedName{Name: r.sessionNamespaceName(session)}, ns)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return !ns.DeletionTimestamp.IsZero(), nil
+}
+
 // ensureSecret returns the attendee's key, generating one only when the Secret
 // is absent.
 //
@@ -388,6 +444,27 @@ func (r *AgentGatewaySessionReconciler) ensureSecret(ctx context.Context, sessio
 		// generated into it.
 	} else if !apierrors.IsNotFound(getErr) {
 		return "", false, getErr
+	}
+
+	// Nothing is minted once the session namespace is on its way out.
+	//
+	// The Secret is owned by that namespace, so when a session ends the garbage
+	// collector deletes it, and the Secret watch that exists to repair an
+	// accidentally deleted Secret cannot tell the two apart. Left unguarded it
+	// mints a replacement moments after the collection, and because
+	// setSessionNamespaceOwner finds no namespace left to own it, the
+	// replacement carries no owner reference at all: an unowned Secret holding
+	// a live credential that nothing will ever collect. Teardown is exactly
+	// when a key should stop existing, so absence here is the desired state,
+	// not damage to repair.
+	//
+	// Checked only on the mint path. A Secret that still exists is read and
+	// reused above, so an attendee mid-session is unaffected by a namespace
+	// that has only just begun terminating.
+	if ending, err := r.sessionNamespaceEnding(ctx, session); err != nil {
+		return "", false, err
+	} else if ending {
+		return "", false, errSessionEnding
 	}
 
 	key, err = participantkey.Generate()
