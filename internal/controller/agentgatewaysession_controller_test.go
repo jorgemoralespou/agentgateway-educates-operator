@@ -191,6 +191,21 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 			}, cm)).To(Succeed())
 			Expect(cm.OwnerReferences).To(BeEmpty(),
 				"the registration must not be owned, or it would be collected before cleanup could run")
+
+			// The grant records which namespace took ownership. That record is
+			// what lets a later repair tell a session ending from an
+			// accidental deletion: by then the namespace is usually gone, and
+			// the owner reference with it.
+			Eventually(func() string {
+				got := &agentgatewayv1alpha1.AgentGatewaySession{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: workshopNamespace, Name: "ws-003",
+				}, got); err != nil {
+					return ""
+				}
+				return got.Status.SessionNamespace
+			}, pollTimeout, pollInterval).Should(Equal("ws-003"),
+				"the owning session namespace must be recorded on status")
 		})
 	})
 

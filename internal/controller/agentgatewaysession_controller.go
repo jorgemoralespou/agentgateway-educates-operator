@@ -208,6 +208,20 @@ func (r *AgentGatewaySessionReconciler) Reconcile(ctx context.Context, req ctrl.
 	// Status carries the Secret name and the gateway URL so the wiring can be
 	// checked by hand, and never the key or its hash, so it is safe to paste
 	// into a support conversation.
+	// Which namespace owns the Secret, recorded on every pass rather than only
+	// on the one that created it.
+	//
+	// Set here rather than inside ensureSecret because that function returns
+	// early when the Secret already exists, so a value written only on the
+	// creating pass would be dropped by the very next reconcile's status
+	// write. This is the record the teardown guard reads once the namespace,
+	// and with it the owner reference, has gone.
+	if owner, err := r.secretOwnerNamespace(ctx, session); err != nil {
+		return ctrl.Result{}, err
+	} else if owner != "" {
+		session.Status.SessionNamespace = owner
+	}
+
 	session.Status.SecretRef = &agentgatewayv1alpha1.SecretReference{Name: session.ResourceName()}
 	session.Status.GatewayURL = catalog.gatewayURL
 	session.Status.ExpiresAt = &metav1.Time{Time: expiresAt}
@@ -390,30 +404,53 @@ var errSessionEnding = errors.New("the session namespace is terminating, so no k
 // sessionNamespaceEnding reports whether this grant's session has ended, so no
 // key should be minted for it.
 //
-// True only when the namespace exists and is terminating. A namespace that is
-// simply absent is NOT teardown: a grant created outside Educates never has
-// one, and setSessionNamespaceOwner already handles that by leaving the Secret
-// to be collected with the workshop namespace instead. Treating absence as
-// teardown stops those grants ever being repaired, which is a worse failure
-// than the one being fixed.
+// True when the namespace is terminating, and also when it has vanished after
+// this grant recorded that it owned the Secret. Both are teardown.
 //
-// That leaves a window this cannot close on its own. Once the namespace object
-// is fully gone, a repair can still mint an unowned Secret. What bounds it is
-// the grant's own deletion, which follows a session ending: the reconcile
-// returns early on DeletionTimestamp, the finalizer removes the registration,
-// and the expiry sweep revokes anything that outlives both. The window is the
-// gap between the namespace disappearing and the grant being deleted, and a
-// Secret minted inside it is removed when the workshop namespace goes.
+// The recorded namespace is what makes the second case safe. Checking only for
+// a terminating namespace looked sufficient and is not: an empty namespace is
+// deleted within a couple of seconds, so the repair reconcile that follows the
+// garbage collection finds nothing there at all. Treating every absence as
+// teardown would be wrong the other way, since a grant created outside Educates
+// never has a session namespace and must still be repaired. Status.
+// SessionNamespace separates them: it is set only when a namespace actually
+// owned the Secret.
 func (r *AgentGatewaySessionReconciler) sessionNamespaceEnding(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession) (bool, error) {
 	ns := &corev1.Namespace{}
 	err := r.Get(ctx, types.NamespacedName{Name: r.sessionNamespaceName(session)}, ns)
 	if apierrors.IsNotFound(err) {
-		return false, nil
+		// Gone. Teardown only if an owning namespace was recorded, which means
+		// one existed and has since been deleted.
+		return session.Status.SessionNamespace != "", nil
 	}
 	if err != nil {
 		return false, err
 	}
 	return !ns.DeletionTimestamp.IsZero(), nil
+}
+
+// secretOwnerNamespace reports the namespace owning this grant's Secret, empty
+// when the Secret is absent or unowned.
+//
+// Read back from the live object rather than remembered from the pass that
+// created it, so the answer is whatever the API server actually holds.
+func (r *AgentGatewaySessionReconciler) secretOwnerNamespace(ctx context.Context, session *agentgatewayv1alpha1.AgentGatewaySession) (string, error) {
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{
+		Namespace: session.Namespace, Name: session.ResourceName(),
+	}, secret)
+	if apierrors.IsNotFound(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	for _, owner := range secret.GetOwnerReferences() {
+		if owner.Kind == "Namespace" {
+			return owner.Name, nil
+		}
+	}
+	return "", nil
 }
 
 // ensureSecret returns the attendee's key, generating one only when the Secret
