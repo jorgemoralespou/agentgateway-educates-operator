@@ -191,6 +191,21 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 			}, cm)).To(Succeed())
 			Expect(cm.OwnerReferences).To(BeEmpty(),
 				"the registration must not be owned, or it would be collected before cleanup could run")
+
+			// The grant records which namespace took ownership. That record is
+			// what lets a later repair tell a session ending from an
+			// accidental deletion: by then the namespace is usually gone, and
+			// the owner reference with it.
+			Eventually(func() string {
+				got := &agentgatewayv1alpha1.AgentGatewaySession{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: workshopNamespace, Name: "ws-003",
+				}, got); err != nil {
+					return ""
+				}
+				return got.Status.SessionNamespace
+			}, pollTimeout, pollInterval).Should(Equal("ws-003"),
+				"the owning session namespace must be recorded on status")
 		})
 	})
 
@@ -341,6 +356,55 @@ var _ = Describe("AgentGatewaySession reconciler", func() {
 				Namespace: testGatewayNamespace, Name: "ws-005-agentgateway",
 			}, cm)).To(Succeed())
 			Expect(parseRegistrationEntry(cm, "ws-005").KeyHash).NotTo(Equal(originalHash))
+		})
+
+		// The limit of self-healing, and the defect that kept the e2e teardown
+		// spec red: when a session ends, the garbage collector removes the
+		// Secret because the session namespace owned it, and the watch above
+		// cannot tell that from an accidental deletion. Repairing it there
+		// resurrects a live credential, and because the namespace that owned it
+		// is gone the replacement is unowned, so nothing will ever collect it.
+		It("does not repair a Secret whose session namespace is terminating", func() {
+			sessionNS := ensureSessionNamespace("ws-038")
+			session := createSession("ws-038")
+
+			Eventually(func() metav1.ConditionStatus {
+				return sessionCondition(session, agentgatewayv1alpha1.ConditionReady)
+			}, pollTimeout, pollInterval).Should(Equal(metav1.ConditionTrue))
+
+			// The Secret is owned by the session namespace, which is what makes
+			// the garbage collector remove it on a real cluster.
+			secret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Namespace: workshopNamespace, Name: "ws-038-agentgateway",
+			}, secret)).To(Succeed())
+			Expect(secret.OwnerReferences).To(HaveLen(1))
+			Expect(secret.OwnerReferences[0].Name).To(Equal(sessionNS.Name))
+
+			// The session ends. envtest runs no namespace controller, so the
+			// namespace stays Terminating, which is exactly the window the
+			// garbage collector acts in on a real cluster.
+			Expect(k8sClient.Delete(ctx, sessionNS)).To(Succeed())
+			Eventually(func() bool {
+				live := &corev1.Namespace{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "ws-038"}, live); err != nil {
+					return false
+				}
+				return !live.DeletionTimestamp.IsZero()
+			}, pollTimeout, pollInterval).Should(BeTrue())
+
+			// Standing in for the collection a real garbage collector performs.
+			Expect(k8sClient.Delete(ctx, secret)).To(Succeed())
+
+			// The Secret must stay gone. Before the guard, the watch fired and
+			// a replacement appeared within seconds, unowned and uncollectable.
+			Consistently(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: workshopNamespace, Name: "ws-038-agentgateway",
+				}, &corev1.Secret{})
+				return apierrors.IsNotFound(err)
+			}, "5s", pollInterval).Should(BeTrue(),
+				"a Secret collected with its session namespace must not be minted again")
 		})
 	})
 

@@ -141,13 +141,52 @@ var _ = Describe("session teardown on a real cluster", Ordered, func() {
 	})
 })
 
+// createNamespace makes a namespace and waits until it is genuinely usable.
+//
+// AlreadyExists is not simply tolerated. A previous run leaves these namespaces
+// Terminating for a while, and a namespace in that state accepts no new
+// objects and never becomes Active: proceeding against one produced a grant
+// whose Secret had no owner reference, and then a three minute wait for a
+// garbage collection that was never going to happen. The failure looked exactly
+// like the operator bug this suite exists to catch, which is worse than a slow
+// test.
+//
+// So an existing namespace is waited out if it is terminating, then recreated,
+// and either way the namespace is confirmed Active before the caller proceeds.
 func createNamespace(name string, labels map[string]string) {
 	GinkgoHelper()
 
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels},
 	}
-	if err := k8sClient.Create(ctx, ns); err != nil {
-		Expect(apierrors.IsAlreadyExists(err)).To(BeTrue())
-	}
+
+	Eventually(func() error {
+		err := k8sClient.Create(ctx, ns)
+		if err == nil || apierrors.IsAlreadyExists(err) {
+			// Either it is ours now, or someone else's leftover: the Active
+			// check below decides which.
+			return nil
+		}
+		return err
+	}, e2eTimeout, e2eInterval).Should(Succeed())
+
+	Eventually(func() (corev1.NamespacePhase, error) {
+		live := &corev1.Namespace{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, live); err != nil {
+			if apierrors.IsNotFound(err) {
+				// A leftover finished terminating. Make it again.
+				fresh := &corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels},
+				}
+				if createErr := k8sClient.Create(ctx, fresh); createErr != nil &&
+					!apierrors.IsAlreadyExists(createErr) {
+					return "", createErr
+				}
+				return "", nil
+			}
+			return "", err
+		}
+		return live.Status.Phase, nil
+	}, e2eTimeout, e2eInterval).Should(Equal(corev1.NamespaceActive),
+		"namespace %q must be Active before the test uses it", name)
 }

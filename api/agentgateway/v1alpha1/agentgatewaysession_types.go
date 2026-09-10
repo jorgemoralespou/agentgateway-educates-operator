@@ -182,6 +182,22 @@ type AgentGatewaySessionStatus struct {
 	// +optional
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
 
+	// SessionNamespace is the namespace that owns this grant's Secret, recorded
+	// when the Secret is first written.
+	//
+	// Exists to tell teardown from an accidental deletion. The Secret is owned
+	// by the session namespace, so a session ending makes the garbage collector
+	// remove it, and the watch that repairs a deleted Secret cannot otherwise
+	// distinguish the two. An empty namespace deletes in a couple of seconds,
+	// well before the repair reconcile runs, so by then there is nothing left
+	// to look at: the operator's own record is the only durable evidence that
+	// an owning namespace ever existed.
+	//
+	// Empty for a grant created outside Educates, which never has a session
+	// namespace and whose Secret is therefore repaired as before.
+	// +optional
+	SessionNamespace string `json:"sessionNamespace,omitempty"`
+
 	// EffectiveTokenBudget is the ceiling actually enforced, after the grant's
 	// own value, the catalog's default and the built-in constant have been
 	// resolved.
