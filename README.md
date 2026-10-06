@@ -149,7 +149,7 @@ and serves no UI.
 - [Deployment guide](docs/deployment.md), install, configure, upgrade, uninstall.
 - [Chart reference](charts/agentgateway-educates-operator/README.md), values, RBAC, uninstall order.
 - [Sample workshop](sample-workshop/README.md).
-- [Glossary](CONTEXT.md): the vocabulary this project uses, and the terms it avoids.
+- [Glossary](GLOSSARY.md): the vocabulary this project uses, and the terms it avoids.
 - [Live-workshop validation runbook](docs/validation/workshop-validation.md).
 - Architecture decisions: [ADR index](docs/adr/).
 
